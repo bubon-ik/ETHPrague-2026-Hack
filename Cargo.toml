@@ -1,0 +1,13 @@
+[package]
+name = "trusted_applet"
+version = "0.1.0"
+edition = "2021"
+description = "Rust Trusted Applet for USB Armory MK II (GoTEE)"
+
+[dependencies]
+gotee_syscall = { path = "gotee_syscall" }
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = true
