@@ -47,11 +47,19 @@ var ramStart uint32 = SecureStart
 var ramSize uint32 = SecureSize
 
 const (
-	sshPort  = 22
-	httpPort = 8080
-	ip       = "10.0.0.1"
-	mac      = "1a:55:89:a2:69:41"
-	hostMAC  = "1a:55:89:a2:69:42"
+	sshPort = 22
+	// USB CDC-ECM peer addresses on real hardware. imx-usbnet exposes
+	// the device as 10.0.0.1 and the host side uses the paired MAC.
+	ip      = "10.0.0.1"
+	mac     = "1a:55:89:a2:69:41"
+	hostMAC = "1a:55:89:a2:69:42"
+
+	// Under QEMU's mcimx6ul-evk we attach a SLIRP user-mode NIC to one
+	// of the i.MX6UL ENET MACs; SLIRP hands out 10.0.2.15 as the default
+	// DHCP lease, so we statically claim that address to match what
+	// hostfwd=tcp::4000-:4000 forwards to.
+	qemuIP  = "10.0.2.15"
+	qemuMAC = "1a:55:89:a2:69:41"
 )
 
 func init() {
@@ -89,18 +97,47 @@ func main() {
 		runtime.GOOS, runtime.GOARCH, runtime.Version())
 	log.Print(banner)
 
-	// Load the Rust Trusted Applet
-	ta, err := loadApplet(taELF)
+	// Load the Rust Trusted Applet — on real hardware, prefer a newer
+	// one persisted on SD by the host uploader; otherwise use the
+	// embedded default so the device always has a rescue applet
+	// available. QEMU skips the SD path entirely: mcimx6ul-evk does not
+	// model SDHCI card-detect the way the tamago driver expects and
+	// Detect() will block forever.
+	appletBytes := taELF
+	if imx6ul.Native {
+		if elf, ok := readAppletFromSD(); ok {
+			log.Printf("SM loaded applet from SD (%d bytes)", len(elf))
+			appletBytes = elf
+		} else {
+			log.Print("SM no applet on SD, using embedded default")
+		}
+	}
+
+	ta, err := loadApplet(appletBytes)
 	if err != nil {
 		log.Fatalf("SM failed to load applet: %v", err)
 	}
 
 	if !imx6ul.Native {
-		// QEMU mode: run applet on serial console, then exit
-		log.Print("SM running applet (QEMU mode)")
-		runApplet(ta, nil)
-		log.Print("SM applet completed")
-		return
+		// QEMU mode: imx-usbnet needs USB device mode that mcimx6ul-evk
+		// does not emulate. Instead bring up the emulated ENET MAC via
+		// a parallel gVisor netstack and expose the same bridge listener
+		// on :4000 so the host side (curl → /square / upload.ts) behaves
+		// identically to the hardware path.
+		qnet, err := startQEMUNet(qemuIP, qemuMAC)
+		if err != nil {
+			log.Fatalf("SM qemu net: %v", err)
+		}
+
+		bridgeListener, err := qnet.ListenerTCP4(bridgePort)
+		if err != nil {
+			log.Fatalf("SM could not create qemu bridge listener: %v", err)
+		}
+		go startBridge(bridgeListener)
+
+		go runApplet(ta, nil)
+		log.Print("SM running applet (QEMU mode) — bridge on :4000 via ENET1")
+		select {} // park forever; the applet + bridge run in goroutines
 	}
 
 	// Hardware mode: configure TrustZone and start USB networking + SSH
@@ -129,13 +166,14 @@ func startNetworking() {
 		log.Fatalf("SM could not create SSH listener: %v", err)
 	}
 
-	httpListener, err := iface.ListenerTCP4(httpPort)
+	go startSSH(sshListener)
+
+	bridgeListener, err := iface.ListenerTCP4(bridgePort)
 	if err != nil {
-		log.Fatalf("SM could not create HTTP listener: %v", err)
+		log.Fatalf("SM could not create bridge listener: %v", err)
 	}
 
-	go startSSH(sshListener)
-	go startHTTPServer(httpListener)
+	go startBridge(bridgeListener)
 
 	usbarmory.USB1.Init()
 	usbarmory.USB1.DeviceMode()

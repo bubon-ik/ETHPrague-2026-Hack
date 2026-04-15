@@ -22,6 +22,54 @@ func (r *RPC) Echo(in string, out *string) error {
 	return nil
 }
 
+// AppletCall is a request the Trusted OS hands to the applet via Recv.
+//
+// Method "__exit" is a sentinel: serve() will call exit() and terminate the
+// applet instead of dispatching it to user code.
+type AppletCall struct {
+	Method string
+	Input  string
+}
+
+// AppletReply is the payload the applet returns via Send.
+type AppletReply struct {
+	Output string
+}
+
+// Channels that feed the applet dispatch loop.
+//
+// Anything inside trusted_os that wants to call the applet pushes an
+// AppletCall onto appletRequestCh and then reads the reply from
+// appletReplyCh. The queues are buffered to depth 1 because the applet runs
+// single-threaded: exactly one call is in flight at a time.
+var (
+	appletRequestCh = make(chan AppletCall, 1)
+	appletReplyCh   = make(chan string, 1)
+)
+
+// Recv blocks until the Trusted OS has queued a request for the applet.
+// Invoked by the applet's serve() loop as `RPC.Recv`.
+func (r *RPC) Recv(_ bool, result *AppletCall) error {
+	call := <-appletRequestCh
+	*result = call
+	return nil
+}
+
+// Send delivers the applet's reply back to whoever queued the request.
+// Invoked by the applet's serve() loop as `RPC.Send`.
+func (r *RPC) Send(reply AppletReply, _ *bool) error {
+	appletReplyCh <- reply.Output
+	return nil
+}
+
+// CallApplet is a convenience for other trusted_os code that wants to invoke
+// the applet synchronously. Use from a goroutine so the applet (also running
+// as a goroutine under the monitor) can pick up the request.
+func CallApplet(method, input string) string {
+	appletRequestCh <- AppletCall{Method: method, Input: input}
+	return <-appletReplyCh
+}
+
 // LEDStatus represents an LED state request.
 type LEDStatus struct {
 	Name string

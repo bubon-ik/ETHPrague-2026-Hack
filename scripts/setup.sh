@@ -6,7 +6,7 @@
 #   - Rust nightly + armv7a-none-eabi target
 #   - arm-none-eabi binutils (cross-linker)
 #   - TamaGo Go compiler (bare metal Go for the Trusted OS)
-#   - QEMU ARM system emulator (optional, for testing)
+#   - QEMU ARM system emulator (for `make qemu` iteration)
 #   - u-boot-tools (mkimage, for .imx image creation)
 
 set -euo pipefail
@@ -132,19 +132,34 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. QEMU (optional)
+# 4. QEMU ARM system emulator
 # ---------------------------------------------------------------------------
 
 if command -v qemu-system-arm &>/dev/null; then
     info "QEMU found: $(qemu-system-arm --version | head -1)"
 else
-    warn "QEMU not found (optional, needed for 'make qemu')"
+    info "Installing qemu-system-arm..."
     case "$OS" in
         Darwin)
-            echo "  Install: brew install qemu"
+            if command -v brew &>/dev/null; then
+                brew install qemu
+            else
+                fail "Homebrew not found. Install it first: https://brew.sh"
+            fi
             ;;
         Linux)
-            echo "  Install: sudo apt-get install qemu-system-arm"
+            if command -v apt-get &>/dev/null; then
+                sudo apt-get update && sudo apt-get install -y qemu-system-arm
+            elif command -v dnf &>/dev/null; then
+                sudo dnf install -y qemu-system-arm
+            elif command -v pacman &>/dev/null; then
+                sudo pacman -S qemu-arch-extra
+            else
+                fail "Unsupported package manager. Install qemu-system-arm manually."
+            fi
+            ;;
+        *)
+            fail "Unsupported OS: $OS"
             ;;
     esac
 fi

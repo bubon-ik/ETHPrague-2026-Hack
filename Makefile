@@ -40,12 +40,20 @@ APPLET_DEST  := trusted_os/assets/trusted_applet.elf
 OS_ELF       := bin/trusted_os.elf
 OS_IMX       := bin/trusted_os.imx
 
-GOENV := GO_EXTLINK_ENABLED=0 CGO_ENABLED=0 GOOS=tamago GOARCH=arm GOARM=7
+GOENV := GO_EXTLINK_ENABLED=0 CGO_ENABLED=0 GOOS=tamago GOOSPKG=github.com/usbarmory/tamago GOARCH=arm GOARM=7
 
 # QEMU
+QEMU_SD ?= bin/sd.img
+QEMU_SD_SIZE_MB ?= 16
+# QEMU networking: attach SLIRP user-mode to the emulated i.MX6UL ENET1
+# MAC and forward host localhost:4000 → guest 10.0.2.15:4000 so the
+# Node/TS webserver + uploader can reach the bridge listener inside the
+# Trusted OS just like it would over USB CDC-ECM on real hardware.
 QEMU ?= qemu-system-arm -machine mcimx6ul-evk -cpu cortex-a7 -m 512M \
-	-nographic -monitor none -serial stdio -net none \
-	-semihosting
+	-nographic -monitor none -serial null -serial stdio \
+	-semihosting \
+	-drive file=$(QEMU_SD),format=raw,if=sd \
+	-nic user,model=imx.enet,hostfwd=tcp:127.0.0.1:4000-10.0.2.15:4000
 
 # --- Targets -----------------------------------------------------------------
 
@@ -89,11 +97,16 @@ imx: trusted_os  ## Build flashable .imx image
 	@rm -f $(OS_ELF).bin
 	@echo "==> Image ready: $(OS_IMX)"
 
-qemu: trusted_os  ## Run in QEMU emulator
+$(QEMU_SD):
+	@mkdir -p $(dir $(QEMU_SD))
+	@echo "==> Creating blank QEMU SD image ($(QEMU_SD_SIZE_MB) MB) at $(QEMU_SD)"
+	dd if=/dev/zero of=$(QEMU_SD) bs=1m count=$(QEMU_SD_SIZE_MB) status=none
+
+qemu: trusted_os $(QEMU_SD)  ## Run in QEMU emulator
 	@echo "==> Starting QEMU (Ctrl-A X to exit)"
 	$(QEMU) -kernel $(OS_ELF)
 
-qemu-gdb: trusted_os  ## Run in QEMU with GDB server
+qemu-gdb: trusted_os $(QEMU_SD)  ## Run in QEMU with GDB server
 	@echo "==> Starting QEMU with GDB on :1234"
 	$(QEMU) -kernel $(OS_ELF) -S -s
 

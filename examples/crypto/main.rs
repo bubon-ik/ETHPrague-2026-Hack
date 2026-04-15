@@ -1,43 +1,59 @@
 //! Crypto — Hardware random number generation demo.
 //!
-//! Demonstrates using the hardware RNG through the GoTEE syscall interface.
-//! The random bytes come from the i.MX6 CAAM or DCP crypto engine.
+//! Exposes a single dispatch method over the bridge:
+//!   {"Method":"Random","Input":"32"} → 32 hardware-random bytes as lowercase hex
 //!
-//! To build: cp examples/crypto/main.rs src/main.rs && make
+//! Upload to the device with `examples/square/upload.ts` — does not
+//! need a `make qemu` re-flash:
+//!
+//!   cp examples/crypto/main.rs src/main.rs
+//!   make applet
+//!   node --experimental-strip-types examples/square/upload.ts \
+//!     target/armv7a-none-eabi/release/trusted_applet
+//!
+//! Then:
+//!   printf '{"Method":"Random","Input":"16"}\n' | nc 10.0.0.1 4000
 
 #![no_std]
 #![no_main]
 
 use gotee_syscall::{self, log};
 
+fn handle(method: &str, input: &[u8], out: &mut [u8]) -> usize {
+    match method {
+        "Random" => {
+            let s = core::str::from_utf8(input).unwrap_or("");
+            let n: usize = s.trim().parse().unwrap_or(0);
+            let n = n.min(64);
+
+            let mut buf = [0u8; 64];
+            gotee_syscall::getrandom(&mut buf[..n]);
+
+            // hex-encode into out
+            let need = n * 2;
+            let w = need.min(out.len());
+            for (i, b) in buf[..n].iter().enumerate() {
+                if i * 2 + 1 >= w {
+                    break;
+                }
+                out[i * 2] = nibble_hex(b >> 4);
+                out[i * 2 + 1] = nibble_hex(b & 0x0f);
+            }
+            w
+        }
+        _ => 0,
+    }
+}
+
+fn nibble_hex(n: u8) -> u8 {
+    match n {
+        0..=9 => b'0' + n,
+        _ => b'a' + (n - 10),
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    log!("Crypto example — hardware random number generation");
-
-    // Generate random bytes in various sizes
-    for size in [4, 16, 32, 64] {
-        let mut buf = [0u8; 64];
-        gotee_syscall::getrandom(&mut buf[..size]);
-        log!("{:>2} random bytes: {:02x?}", size, &buf[..size]);
-    }
-
-    // Generate a 256-bit key
-    let mut key = [0u8; 32];
-    gotee_syscall::getrandom(&mut key);
-    log!("256-bit random key: {:02x?}", key);
-
-    // Verify randomness: two calls should produce different output
-    let mut a = [0u8; 16];
-    let mut b = [0u8; 16];
-    gotee_syscall::getrandom(&mut a);
-    gotee_syscall::getrandom(&mut b);
-
-    if a == b {
-        log!("WARNING: two consecutive getrandom calls returned identical bytes!");
-    } else {
-        log!("Randomness check passed: consecutive calls differ");
-    }
-
-    log!("Crypto example complete");
-    gotee_syscall::exit();
+    log!("Crypto example ready");
+    gotee_syscall::serve(handle)
 }

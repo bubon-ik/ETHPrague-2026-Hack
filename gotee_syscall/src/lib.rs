@@ -8,8 +8,6 @@
 
 #![no_std]
 
-pub mod http;
-
 use core::arch::asm;
 use core::fmt::{self, Write};
 use core::panic::PanicInfo;
@@ -128,6 +126,136 @@ pub fn rpc_response(buf: &mut [u8]) -> usize {
     }
 
     n as usize
+}
+
+// ---------------------------------------------------------------------------
+// Applet dispatch loop
+// ---------------------------------------------------------------------------
+
+/// Signature for a trusted-function handler.
+///
+/// - `method` — the method name the caller asked for
+/// - `input`  — request payload (UTF-8 bytes, as delivered by the Trusted OS)
+/// - `out`    — response buffer the handler writes into
+///
+/// Returns the number of bytes written to `out`.
+pub type Handler = fn(method: &str, input: &[u8], out: &mut [u8]) -> usize;
+
+/// Runs the applet dispatch loop. Never returns.
+///
+/// Each iteration asks the Trusted OS for the next queued request via
+/// `RPC.Recv`, invokes `handler`, and ships the reply via `RPC.Send`.
+///
+/// A request with method `"__exit"` causes the applet to call [`exit`]
+/// cleanly — the sentinel used by the Trusted OS to end the session.
+pub fn serve(handler: Handler) -> ! {
+    // Incoming request envelope + outgoing payload.
+    let mut rpc_buf = [0u8; 4096];
+    let mut out_buf = [0u8; 4096];
+
+    loop {
+        // 1. Long-poll for the next request.
+        rpc_request(br#"{"method":"RPC.Recv","params":[false],"id":1}"#);
+        let n = rpc_response(&mut rpc_buf);
+
+        let json = core::str::from_utf8(&rpc_buf[..n]).unwrap_or("");
+        let method = extract_json_string(json, "\"Method\":");
+        let input = extract_json_string(json, "\"Input\":");
+
+        if method == "__exit" {
+            exit();
+        }
+
+        // 2. Dispatch to the user's handler.
+        let n_out = handler(method, input.as_bytes(), &mut out_buf);
+        let output = core::str::from_utf8(&out_buf[..n_out]).unwrap_or("");
+
+        // 3. Ship the reply. Re-use rpc_buf as the send scratch.
+        let mut send = JsonBuf::new();
+        let _ = send.write_str(r#"{"method":"RPC.Send","params":[{"Output":"#);
+        let _ = write_json_string(&mut send, output);
+        let _ = send.write_str(r#"}],"id":2}"#);
+
+        rpc_request(send.as_bytes());
+        // Discard ack.
+        rpc_response(&mut rpc_buf);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tiny no-alloc JSON helpers (just enough for the dispatch envelope)
+// ---------------------------------------------------------------------------
+
+struct JsonBuf {
+    buf: [u8; 1024],
+    pos: usize,
+}
+
+impl JsonBuf {
+    fn new() -> Self {
+        Self {
+            buf: [0u8; 1024],
+            pos: 0,
+        }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.buf[..self.pos]
+    }
+}
+
+impl Write for JsonBuf {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let bytes = s.as_bytes();
+        if self.pos + bytes.len() > self.buf.len() {
+            return Err(fmt::Error);
+        }
+        self.buf[self.pos..self.pos + bytes.len()].copy_from_slice(bytes);
+        self.pos += bytes.len();
+        Ok(())
+    }
+}
+
+fn write_json_string(w: &mut JsonBuf, s: &str) -> fmt::Result {
+    w.write_str("\"")?;
+    for b in s.bytes() {
+        match b {
+            b'"' => w.write_str("\\\"")?,
+            b'\\' => w.write_str("\\\\")?,
+            b'\n' => w.write_str("\\n")?,
+            b'\r' => w.write_str("\\r")?,
+            b'\t' => w.write_str("\\t")?,
+            0x00..=0x1f => write!(w, "\\u{:04x}", b)?,
+            _ => w.write_char(b as char)?,
+        }
+    }
+    w.write_str("\"")
+}
+
+/// Returns the raw (still-escaped) slice of a JSON string value following the
+/// given key. Good enough for ASCII payloads; callers needing binary should
+/// use their own encoding.
+fn extract_json_string<'a>(json: &'a str, key: &str) -> &'a str {
+    let Some(key_pos) = json.find(key) else {
+        return "";
+    };
+    let after_key = &json[key_pos + key.len()..];
+    let Some(quote_start) = after_key.find('"') else {
+        return "";
+    };
+    let content = &after_key[quote_start + 1..];
+    let bytes = content.as_bytes();
+    let mut end = 0;
+    while end < bytes.len() {
+        if bytes[end] == b'\\' {
+            end += 2;
+        } else if bytes[end] == b'"' {
+            return &content[..end];
+        } else {
+            end += 1;
+        }
+    }
+    ""
 }
 
 // ---------------------------------------------------------------------------

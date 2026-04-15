@@ -25,8 +25,12 @@ func configureTrustZone() error {
 		return err
 	}
 
-	// Protect Secure World memory region
-	if err := imx6ul.TZASC.EnableRegion(1, SecureStart, tzc380.Size256M, (1<<tzc380.SP_SW_RD)|(1<<tzc380.SP_SW_WR)); err != nil {
+	// Protect Secure World memory region (256 MB window starting at
+	// SecureStart). TZC-380 requires power-of-two region sizes; the
+	// region is intentionally larger than SecureSize so the watchdog,
+	// crypto engines, and DMA are all covered.
+	const secureRegionSize = 1 << 28 // 256 MB
+	if err := imx6ul.TZASC.EnableRegion(1, SecureStart, secureRegionSize, (1<<tzc380.SP_SW_RD)|(1<<tzc380.SP_SW_WR)); err != nil {
 		return err
 	}
 
@@ -47,7 +51,7 @@ func configureTrustZone() error {
 		if err := imx6ul.CSU.SetAccess(34, false, false); err != nil {
 			return err
 		}
-		imx6ul.CSU.SetSecurityLevel(34, 0, csu.SEC_LEVEL_4)
+		imx6ul.CSU.SetSecurityLevel(34, 0, csu.SEC_LEVEL_4, false)
 	}
 
 	return nil

@@ -1,39 +1,48 @@
 //! Remote Attestation — Request a device-unique derived key from the Trusted OS.
 //!
-//! The Trusted OS uses the on-chip crypto engine (CAAM or DCP) to derive a
-//! hardware-bound key. This key can be used for remote attestation to prove
-//! the applet is running on genuine hardware in the Secure World.
+//! Exposes a single dispatch method over the bridge:
+//!   {"Method":"Attest","Input":""} → hex-encoded derived key, or error string
 //!
-//! NOTE: Attestation only works on real hardware, not in QEMU.
+//! NOTE: Attestation only works on real hardware, not in QEMU — on QEMU
+//! the response is the error string returned by the CAAM/DCP stub.
 //!
-//! To build: cp examples/attestation/main.rs src/main.rs && make
+//! Upload to the device with `examples/square/upload.ts` — does not
+//! need a `make qemu` re-flash:
+//!
+//!   cp examples/attestation/main.rs src/main.rs
+//!   make applet
+//!   node --experimental-strip-types examples/square/upload.ts \
+//!     target/armv7a-none-eabi/release/trusted_applet
+//!
+//! Then:
+//!   printf '{"Method":"Attest","Input":""}\n' | nc 10.0.0.1 4000
 
 #![no_std]
 #![no_main]
 
 use gotee_syscall::{self, log};
 
+const ATTEST_REQ: &[u8] = br#"{"method":"RPC.Attest","params":[true],"id":1}"#;
+
+fn handle(method: &str, _input: &[u8], out: &mut [u8]) -> usize {
+    match method {
+        "Attest" => {
+            gotee_syscall::rpc_request(ATTEST_REQ);
+            let mut resp = [0u8; 512];
+            let n = gotee_syscall::rpc_response(&mut resp);
+
+            // Pass the raw JSON reply through — callers on the host side
+            // can parse DerivedKey / Error themselves.
+            let k = n.min(out.len());
+            out[..k].copy_from_slice(&resp[..k]);
+            k
+        }
+        _ => 0,
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    log!("Attestation example — hardware key derivation via RPC");
-
-    // Call the Attest RPC method on the Trusted OS
-    let req = br#"{"method":"RPC.Attest","params":[true],"id":1}"#;
-
-    log!("Sending attestation request to Trusted OS...");
-    gotee_syscall::rpc_request(req);
-
-    let mut resp = [0u8; 512];
-    let n = gotee_syscall::rpc_response(&mut resp);
-
-    if n > 0 {
-        log!("Attestation response ({} bytes):", n);
-        log!("  {}", core::str::from_utf8(&resp[..n]).unwrap_or("<invalid UTF-8>"));
-    } else {
-        log!("No attestation response received");
-        log!("(This is expected when running in QEMU — attestation requires real hardware)");
-    }
-
-    log!("Attestation example complete");
-    gotee_syscall::exit();
+    log!("Attestation example ready");
+    gotee_syscall::serve(handle)
 }
