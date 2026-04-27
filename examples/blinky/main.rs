@@ -3,13 +3,12 @@
 //! Exposes a single dispatch method over the bridge:
 //!   {"Method":"Blink","Input":"3"} → toggles blue LED 3 times, replies "ok"
 //!
-//! Upload to the device with `examples/square/upload.ts` — does not
-//! need a `make qemu` re-flash:
+//! Upload to the device with `bun run upload` — this only touches the
+//! applet, no Trusted OS rebuild or SD re-flash needed:
 //!
 //!   cp examples/blinky/main.rs src/main.rs
 //!   make applet
-//!   node --experimental-strip-types examples/square/upload.ts \
-//!     target/armv7a-none-eabi/release/trusted_applet
+//!   bun run upload target/armv7a-none-eabi/release/trusted_applet
 //!
 //! Then:
 //!   printf '{"Method":"Blink","Input":"3"}\n' | nc 10.0.0.1 4000

@@ -26,3 +26,8 @@ trusted_os/assets/*.elf
 # OS files
 .DS_Store
 Thumbs.db
+
+# Bun
+node_modules/
+bun.lock
+bun.lockb

@@ -6,10 +6,14 @@
 // embedded default. If the card is missing, the region is blank, or the
 // checksum doesn't match, boot falls back to the embedded default applet.
 //
-// Layout (uSD / USDHC1 — never eMMC, which holds the bootloader):
+// Layout (uSD / USDHC1):
 //
-//	LBA 0       : header (512 B) — magic "GTA1", u32 length (LE), u32 CRC32 (LE)
-//	LBA 1..N    : ELF payload, padded to a whole block
+//	LBA 0..65535   : reserved for the Trusted OS .imx image (32 MB).
+//	                 The i.MX6 BootROM expects the IVT at byte 1024
+//	                 (LBA 2) when booting from uSD, so the applet region
+//	                 must sit past the Trusted OS payload.
+//	LBA 65536      : header (512 B) — magic "GTA1", u32 length (LE), u32 CRC32 (LE)
+//	LBA 65537..N   : ELF payload, padded to a whole block
 //
 // This is not a filesystem and is not portable across tools. It's the
 // minimum scheme that lets the bridge hand the upload off to the bootrom
@@ -30,9 +34,11 @@ import (
 const (
 	appletMagic     = "GTA1"
 	appletMaxSize   = 512 * 1024 // 512 KB — sized to the applet region in mem.go
-	appletHeaderLBA = 0
-	appletBodyLBA   = 1
 	appletBlockSize = 512
+	// 32 MB reserved at the start of the SD card for the Trusted OS .imx
+	// (current image is ~11 MB; this leaves ~3× headroom for growth).
+	appletHeaderLBA = (32 * 1024 * 1024) / appletBlockSize // = 65536
+	appletBodyLBA   = appletHeaderLBA + 1
 )
 
 // readAppletFromSD returns (elf, true) when the external SD card holds a

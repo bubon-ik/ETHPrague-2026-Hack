@@ -1,51 +1,44 @@
-//! Your Trusted Applet — edit this file!
+//! Remote Attestation — Request a device-unique derived key from the Trusted OS.
 //!
-//! Runs in ARM TrustZone Secure World (user mode). The Trusted OS dispatches
-//! requests to `handle`; your job is to fill in the match arms with the
-//! functions you want to run inside the Trusted Computing Base.
+//! Exposes a single dispatch method over the bridge:
+//!   {"Method":"Attest","Input":""} → hex-encoded derived key, or error string
 //!
-//! Anything that does NOT need to be trusted (HTTP servers, file I/O, UI,
-//! etc.) belongs in a separate program — not in here.
+//! Upload to the device with `bun run upload` — this only touches the
+//! applet, no Trusted OS rebuild or SD re-flash needed:
+//!
+//!   cp examples/attestation/main.rs src/main.rs
+//!   make applet
+//!   bun run upload target/armv7a-none-eabi/release/trusted_applet
+//!
+//! Then:
+//!   printf '{"Method":"Attest","Input":""}\n' | nc 10.0.0.1 4000
 
 #![no_std]
 #![no_main]
 
 use gotee_syscall::{self, log};
 
-/// The one function you edit. Called once per incoming request.
-///
-/// - `method` — which trusted operation the caller asked for
-/// - `input`  — request payload
-/// - `out`    — write your response bytes here
-///
-/// Return the number of bytes written to `out`. Return `0` to signal an
-/// unknown method or empty reply.
-fn handle(method: &str, input: &[u8], out: &mut [u8]) -> usize {
-    match method {
-        "Echo" => {
-            let n = input.len().min(out.len());
-            out[..n].copy_from_slice(&input[..n]);
-            n
-        }
+const ATTEST_REQ: &[u8] = br#"{"method":"RPC.Attest","params":[true],"id":1}"#;
 
-        // Add your trusted methods here, for example:
-        //
-        //   "Sign" => {
-        //       let mut key = [0u8; 32];
-        //       gotee_syscall::getrandom(&mut key); // hardware RNG
-        //       // ... compute signature over `input`, write to `out` ...
-        //       signature_len
-        //   }
-        //
-        // See examples/square/main.rs for a worked end-to-end example
-        // (applet + host webserver + uploader) with integer and byte
-        // handlers and a no-alloc formatter.
+fn handle(method: &str, _input: &[u8], out: &mut [u8]) -> usize {
+    match method {
+        "Attest" => {
+            gotee_syscall::rpc_request(ATTEST_REQ);
+            let mut resp = [0u8; 512];
+            let n = gotee_syscall::rpc_response(&mut resp);
+
+            // Pass the raw JSON reply through — callers on the host side
+            // can parse DerivedKey / Error themselves.
+            let k = n.min(out.len());
+            out[..k].copy_from_slice(&resp[..k]);
+            k
+        }
         _ => 0,
     }
 }
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    log!("Trusted applet ready");
+    log!("Attestation example ready");
     gotee_syscall::serve(handle)
 }

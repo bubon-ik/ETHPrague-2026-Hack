@@ -1,19 +1,7 @@
 //! Square — parse an integer from the request, compute `x * x`, return it.
 //!
-//! The applet half of the `examples/square/` end-to-end demo. Paired with
-//! `server.ts` (HTTP → bridge shim) and `upload.ts` (ELF uploader) in the
-//! same directory.
-//!
-//!   cp examples/square/main.rs src/main.rs
-//!   make applet
-//!   node --experimental-strip-types examples/square/upload.ts \
-//!     target/armv7a-none-eabi/release/trusted_applet
-//!
-//! Then, from the host:
-//!   DEVICE_HOST=127.0.0.1 node --experimental-strip-types \
-//!     examples/square/server.ts
-//!   curl 'http://localhost:3000/square?x=7'       # {"x":7,"result":49}
-//!   curl 'http://localhost:3000/reverse?s=hello'  # {"s":"hello","reversed":"olleh"}
+//! See examples/square/README.md for the host-side HTTP wrapper and the
+//! full upload / curl flow.
 
 #![no_std]
 #![no_main]
@@ -38,15 +26,6 @@ fn handle(method: &str, input: &[u8], out: &mut [u8]) -> usize {
             out[..n].copy_from_slice(&tmp[..n]);
             n
         }
-
-        "Reverse" => {
-            let n = input.len().min(out.len());
-            for (i, b) in input[..n].iter().rev().enumerate() {
-                out[i] = *b;
-            }
-            n
-        }
-
         _ => 0,
     }
 }

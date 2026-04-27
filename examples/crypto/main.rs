@@ -3,13 +3,12 @@
 //! Exposes a single dispatch method over the bridge:
 //!   {"Method":"Random","Input":"32"} → 32 hardware-random bytes as lowercase hex
 //!
-//! Upload to the device with `examples/square/upload.ts` — does not
-//! need a `make qemu` re-flash:
+//! Upload to the device with `bun run upload` — this only touches the
+//! applet, no Trusted OS rebuild or SD re-flash needed:
 //!
 //!   cp examples/crypto/main.rs src/main.rs
 //!   make applet
-//!   node --experimental-strip-types examples/square/upload.ts \
-//!     target/armv7a-none-eabi/release/trusted_applet
+//!   bun run upload target/armv7a-none-eabi/release/trusted_applet
 //!
 //! Then:
 //!   printf '{"Method":"Random","Input":"16"}\n' | nc 10.0.0.1 4000

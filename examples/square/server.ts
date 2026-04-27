@@ -1,83 +1,56 @@
-// Host webserver example — exposes GET /square?x=N over HTTP and forwards
-// it to the Trusted Applet via the Trusted OS bridge on the device.
+// Host webserver for the Square example — exposes GET /square?x=N over
+// HTTP and forwards to the applet via the Trusted OS bridge on
+// 10.0.0.1:4000.
 //
-// Run with Node's built-in TypeScript loader (Node 22+):
-//   node --experimental-strip-types examples/square/server.ts
-//
-// Then:
-//   curl 'http://localhost:3000/square?x=7'
-//   # {"x":7,"result":49}
-//
-// Protocol note: the bridge decodes/encodes JSON with Go's default struct
-// field casing, so the fields are Method/Input/Output/Error (capitalized).
-// Don't lowercase them.
+//   bun run examples/square/server.ts
+//   curl 'http://localhost:3000/square?x=7'      # {"x":7,"result":49}
 
-import { createServer } from 'http';
-import { connect } from 'net';
+const DEVICE_HOST = Bun.env.DEVICE_HOST ?? '10.0.0.1';
+const DEVICE_PORT = Number(Bun.env.DEVICE_PORT ?? 4000);
 
-// On real hardware the USB CDC-ECM interface appears at 10.0.0.1. In
-// QEMU, run with DEVICE_HOST=127.0.0.1 — the Makefile's QEMU invocation
-// hostfwds localhost:4000 onto the guest's gVisor bridge listener.
-const DEVICE = {
-  host: process.env.DEVICE_HOST ?? '10.0.0.1',
-  port: Number(process.env.DEVICE_PORT ?? 4000),
-};
-
-function callApplet(method: string, input: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const s = connect(DEVICE, () => {
-      s.write(JSON.stringify({ Method: method, Input: input }) + '\n');
-    });
-
-    let buf = '';
-    s.on('data', (d) => {
-      buf += d;
-      const nl = buf.indexOf('\n');
-      if (nl < 0) return;
-      s.end();
-      try {
-        const reply = JSON.parse(buf.slice(0, nl));
-        if (reply.Error) reject(new Error(reply.Error));
-        else resolve(reply.Output ?? '');
-      } catch (e) {
-        reject(e);
-      }
-    });
-    s.on('error', reject);
+// Each request spawns `nc` to talk to the bridge. The protocol is a
+// single newline-terminated JSON request, single JSON reply, then close.
+async function callApplet(method: string, input: string): Promise<string> {
+  const req = JSON.stringify({ Method: method, Input: input }) + '\n';
+  const proc = Bun.spawn(['nc', '-w', '3', DEVICE_HOST, String(DEVICE_PORT)], {
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
   });
+  proc.stdin.write(req);
+  await proc.stdin.end();
+
+  const [stdout, stderr, exit] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  if (exit !== 0 || !stdout) {
+    throw new Error(stderr.trim() || `nc exited ${exit}`);
+  }
+
+  const nl = stdout.indexOf('\n');
+  const reply = JSON.parse(nl >= 0 ? stdout.slice(0, nl) : stdout);
+  if (reply.Error) throw new Error(reply.Error);
+  return reply.Output ?? '';
 }
 
-const server = createServer(async (req, res) => {
-  const url = new URL(req.url ?? '/', 'http://x');
-  if (url.pathname === '/square') {
+const server = Bun.serve({
+  port: 3000,
+  hostname: '127.0.0.1',
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname !== '/square') return new Response('not found', { status: 404 });
+
     const x = url.searchParams.get('x') ?? '0';
     try {
       const out = await callApplet('Square', x);
-      res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ x: Number(x), result: Number(out) }));
+      return Response.json({ x: Number(x), result: Number(out) });
     } catch (e) {
-      res.statusCode = 500;
-      res.end(JSON.stringify({ error: (e as Error).message }));
+      return Response.json({ error: (e as Error).message }, { status: 500 });
     }
-    return;
-  }
-
-  if (url.pathname === '/reverse') {
-    const s = url.searchParams.get('s') ?? '';
-    try {
-      const out = await callApplet('Reverse', s);
-      res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ s, reversed: out }));
-    } catch (e) {
-      res.statusCode = 500;
-      res.end(JSON.stringify({ error: (e as Error).message }));
-    }
-    return;
-  }
-  res.statusCode = 404;
-  res.end('not found');
+  },
 });
 
-server.listen(3000, '127.0.0.1', () => {
-  console.log('listening on http://localhost:3000/square?x=7');
-});
+console.log(`listening on http://${server.hostname}:${server.port}/square?x=7`);

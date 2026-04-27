@@ -3,16 +3,12 @@
 //! Exposes a single dispatch method over the bridge:
 //!   {"Method":"Attest","Input":""} → hex-encoded derived key, or error string
 //!
-//! NOTE: Attestation only works on real hardware, not in QEMU — on QEMU
-//! the response is the error string returned by the CAAM/DCP stub.
-//!
-//! Upload to the device with `examples/square/upload.ts` — does not
-//! need a `make qemu` re-flash:
+//! Upload to the device with `bun run upload` — this only touches the
+//! applet, no Trusted OS rebuild or SD re-flash needed:
 //!
 //!   cp examples/attestation/main.rs src/main.rs
 //!   make applet
-//!   node --experimental-strip-types examples/square/upload.ts \
-//!     target/armv7a-none-eabi/release/trusted_applet
+//!   bun run upload target/armv7a-none-eabi/release/trusted_applet
 //!
 //! Then:
 //!   printf '{"Method":"Attest","Input":""}\n' | nc 10.0.0.1 4000

@@ -1,39 +1,38 @@
 # GoTEE Rust Starter
 
-Write Rust applications that run in the ARM TrustZone Secure World on a [USB Armory MK II](https://github.com/usbarmory/usbarmory/wiki).
+Write Rust code that runs inside ARM TrustZone **Secure World** on a [USB Armory MK II](https://github.com/usbarmory/usbarmory/wiki). The Trusted Computing Base is tiny: your applet is a pure `(method, input) → output` function. Everything else — webservers, UIs, storage — lives outside and calls in when it needs a trusted operation.
 
-This boilerplate keeps the Trusted Computing Base small: the applet is a pure request/response function. You write the trusted computation in `src/main.rs`; everything else (webservers, networking, UIs) lives outside Secure World and calls in when it needs a trusted operation.
+## Prerequisites
+
+- USB Armory MK II + a microSD card + a USB-C **data** cable
+- [Docker](https://www.docker.com/) (Desktop on Mac, Engine on Linux)
+- [Rust](https://rustup.rs/) — the repo pins nightly via `rust-toolchain.toml`
+- `nc` (BSD netcat) — preinstalled on macOS; `sudo apt install netcat-openbsd` on Debian/Ubuntu
+- [Bun](https://bun.sh/) — *optional*, only needed by examples that ship a host-side HTTP shim (e.g. `examples/square/`)
 
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
-./scripts/setup.sh
+# 1. Build the flashable image (~5 min first time, ~30 s thereafter)
+./docker/build.sh
 
-# 2. One-time: flash the Trusted OS firmware onto the device.
-#    On hardware:
-make imx && imx_usb bin/trusted_os.imx
-#    Or iterate in QEMU:
-make qemu
+# 2. Flash it onto an SD card
+./scripts/flash-sd.sh /dev/diskN              # macOS: diskutil list
+                                              # Linux: lsblk -o NAME,SIZE,RM
 
-# 3. Run the host webserver on your laptop (zero npm deps)
-node --experimental-strip-types examples/square/server.ts
+# 3. Insert the SD, set the MK II boot switch to µSD, plug USB into your host.
+#    The device appears as a USB CDC-ECM network interface.
 
-# 4. Call the applet via HTTP
-curl 'http://localhost:3000/square?x=7'
-# {"x":7,"result":49}
+# 4. Bring up the host side of the USB link (assigns 10.0.0.2 and primes
+#    ARP). Re-run after any device reboot — macOS drops the IP on disconnect.
+./scripts/armory-link.sh
 
-# 5. Change the applet without re-flashing firmware
-$EDITOR src/main.rs
-make applet
-node --experimental-strip-types examples/square/upload.ts \
-  target/armv7a-none-eabi/release/trusted_applet
-# ok, rebooting → device comes back up running your new applet
+# 5. Talk to the default applet
+printf '{"Method":"Echo","Input":"hi"}\n' | nc 10.0.0.1 4000
+# {"Output":"hi"}
 ```
 
-The squaring runs inside the Trusted Applet on the Armory. The host
-webserver is just a thin shim that translates HTTP into the device's
-JSON/TCP bridge on `10.0.0.1:4000`.
+That's the whole stack working: your shell → USB CDC-ECM → Trusted OS → Rust applet in Secure World → reply. For a richer demo that wraps the bridge in an HTTP webserver, see [`examples/square/`](examples/square/).
 
 ## Writing a trusted function
 
@@ -47,7 +46,7 @@ fn handle(method: &str, input: &[u8], out: &mut [u8]) -> usize {
             out[..n].copy_from_slice(&input[..n]);
             n
         }
-        // "Sign" => { /* use getrandom() for keys, write signature to out */ }
+        // "Sign" => { ... gotee_syscall::getrandom(&mut key) ... }
         _ => 0,
     }
 }
@@ -58,29 +57,37 @@ pub extern "C" fn _start() -> ! {
 }
 ```
 
-`serve()` loops forever: it long-polls the Trusted OS for the next request, calls `handle`, and ships the reply. Under QEMU the Trusted OS brings up the bridge on `10.0.2.15:4000`; under real hardware it rides USB CDC-ECM at `10.0.0.1:4000`. In both cases the applet just waits for calls.
+`serve()` long-polls the Trusted OS for the next request, calls `handle`, and ships the reply.
 
-## Calling the applet from your laptop
+## Hot-swap: change the applet without reflashing
 
-The Trusted OS exposes a single TCP JSON bridge on `10.0.0.1:4000` over USB networking. Your laptop talks to it in any language you like — the device does not need a Normal World OS.
+```bash
+$EDITOR src/main.rs
+make applet
+bun run upload target/armv7a-none-eabi/release/trusted_applet
+# → ok, rebooting — device comes back up in ~5 s running your new applet
+./scripts/armory-link.sh    # re-arm the host IP after the reboot (macOS drops it)
+```
 
-The protocol is newline-delimited JSON with Go-style field casing:
+`scripts/upload.ts` base64-encodes the ELF and POSTs it to the bridge's `__upload` method. The Trusted OS validates the header, writes it to the SD card past the Trusted OS image, then triggers a watchdog reset. If the new applet is broken, the next boot silently falls back to the embedded default — the device self-recovers.
+
+(The uploader uses Bun because it's a one-file script, but any language that can open a TCP socket works. See the [bridge protocol](#bridge-protocol) below.)
+
+## Bridge protocol
+
+The Trusted OS exposes a single newline-delimited JSON TCP listener on `10.0.0.1:4000`:
 
 ```
-# Any Method other than __upload is forwarded verbatim to the applet.
-→ {"Method":"Square","Input":"7"}
-← {"Output":"49"}
+→ {"Method":"Echo","Input":"hi"}
+← {"Output":"hi"}
 
-# __upload persists a new applet ELF to SD and reboots.
 → {"Method":"__upload","Input":"<base64 ELF>"}
 ← {"Output":"ok, rebooting"}
 ```
 
-`examples/square/server.ts` is a zero-dependency Node webserver that wraps this in an HTTP endpoint. `examples/square/upload.ts` uploads a new applet ELF. Neither uses npm — just Node built-ins.
+Any `Method` other than `__upload` is forwarded verbatim to your applet's `handle()`.
 
-## How It Works
-
-Your Rust code runs as a **Trusted Applet** inside ARM TrustZone:
+## How it works
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -88,154 +95,117 @@ Your Rust code runs as a **Trusted Applet** inside ARM TrustZone:
 │                                                  │
 │  Secure World (TrustZone)                        │
 │  ┌────────────────────────────────────────────┐  │
-│  │  Trusted OS  (Go/TamaGo, system mode)     │  │
-│  │   - Hardware initialization               │  │
-│  │   - Syscall handling                      │  │
-│  │   - Remote attestation (DCP/ATECC608A)    │  │
-│  │   - USB networking + SSH console          │  │
+│  │  Trusted OS  (Go/TamaGo, system mode)      │  │
+│  │   - Hardware init, syscall dispatch        │  │
+│  │   - TCP JSON bridge on :4000 (CDC-ECM)     │  │
+│  │   - SSH console on :22                     │  │
 │  ├────────────────────────────────────────────┤  │
-│  │  Trusted Applet  (Rust, user mode)        │  │
-│  │   - YOUR CODE (src/main.rs)               │  │
-│  │   - Uses gotee_syscall crate              │  │
+│  │  Trusted Applet  (Rust, user mode)         │  │
+│  │   - YOUR CODE (src/main.rs)                │  │
+│  │   - Uses gotee_syscall crate               │  │
 │  └────────────────────────────────────────────┘  │
 │                                                  │
-│  Normal World (not used by default)              │
+│  Normal World: unused in this starter            │
 └──────────────────────────────────────────────────┘
 ```
 
-The **Trusted OS** (in `trusted_os/`) is a Go unikernel compiled with [TamaGo](https://github.com/usbarmory/tamago) that runs on bare metal. It sets up TrustZone, loads your Rust applet, and supervises it. You don't need to modify it.
+The **Trusted OS** (`docker/trusted_os/`) is a Go unikernel compiled with [TamaGo](https://github.com/usbarmory/tamago) that runs on bare metal. It sets up hardware, loads your Rust applet, and supervises it.
 
-Your **Trusted Applet** (in `src/main.rs`) runs in Secure World user mode. It communicates with the Trusted OS through syscalls provided by the `gotee_syscall` crate.
+The **Trusted Applet** (`src/main.rs`) runs in Secure World *user mode* and talks to the Trusted OS via syscalls provided by the `gotee_syscall` crate.
 
-## Project Structure
+## Project structure
 
 ```
 gotee_starter/
-├── src/main.rs              ← Your applet code (edit this!)
-├── gotee_syscall/           ← Syscall library (import this)
-│   └── src/lib.rs
-├── trusted_os/              ← Trusted OS (don't modify)
-│   ├── main.go
-│   ├── handler.go
-│   ├── exec.go
-│   ├── rpc.go               (CallApplet, RPC services)
-│   ├── bridge.go            (TCP JSON bridge on :4000)
-│   ├── applet_store.go      (SD raw-block applet storage)
-│   ├── reset.go             (platform reset wrapper)
-│   ├── mem.go
-│   └── tz.go
+├── src/main.rs              ← your applet (edit this)
 ├── examples/
-│   ├── blinky/main.rs       (LED control — method "Blink")
-│   ├── crypto/main.rs       (hardware RNG — method "Random")
-│   ├── attestation/main.rs  (remote attestation — method "Attest")
-│   └── square/              (applet + Node webserver + uploader — full end-to-end demo)
-├── applet.ld                ← Linker script
-├── Cargo.toml               ← Rust project config
-├── Makefile                 ← Build orchestration
-└── scripts/setup.sh         ← Dependency installer
+│   ├── blinky/              ← LED control
+│   ├── crypto/              ← hardware RNG
+│   ├── attestation/         ← remote attestation
+│   └── square/              ← x² applet + Bun HTTP shim (own README)
+├── scripts/
+│   ├── flash-sd.sh          ← SD card flasher (macOS + Linux)
+│   ├── armory-link.sh       ← reassigns host IP on the CDC-ECM link
+│   └── upload.ts            ← applet uploader (Bun, used for hot-swap)
+├── docker/                  ← image-building pipeline (Rust, Go, mkimage)
+│   ├── Dockerfile
+│   ├── build.sh             ← produces bin/trusted_os.imx
+│   ├── Makefile
+│   ├── Cargo.toml
+│   ├── gotee_syscall/
+│   ├── trusted_os/
+│   ├── applet.ld
+│   └── imximage.cfg
+├── Makefile                 ← thin wrapper that delegates to docker/
+└── package.json             ← bun run upload
 ```
 
-## Available Syscalls
+The whole image-building pipeline lives in `docker/` so the root stays focused on what you edit: `src/main.rs` + `examples/` + `scripts/`.
 
-The `gotee_syscall` crate provides these functions:
+## Examples
 
-| Function | Description |
-|----------|-------------|
-| `serve(handler)` | Run the applet dispatch loop |
-| `println!("...")` | Print to the Trusted OS console |
-| `log!("...")` | Print with HH:MM:SS timestamp |
-| `exit()` | Terminate the applet |
-| `nanotime() -> u64` | Get system time in nanoseconds |
-| `getrandom(&mut buf)` | Fill buffer with hardware-random bytes |
-| `rpc_request(&data)` | Send a raw JSON-RPC request to Trusted OS |
-| `rpc_response(&mut buf) -> usize` | Read raw RPC response |
+Copy one over `src/main.rs`, `make applet`, upload. Each example is a complete working applet, driven over the bridge with `nc` (no webserver required).
 
-## RPC Services
-
-The Trusted OS exposes these RPC methods:
-
-| Method | Parameters | Description |
-|--------|------------|-------------|
-| `RPC.Recv` | `bool` | Blocks until the Trusted OS has queued a call for the applet |
-| `RPC.Send` | `{Output: string}` | Returns the applet's reply to the queued caller |
-| `RPC.Echo` | `string` | Returns the input string (handy for diagnostics) |
-| `RPC.LED` | `{Name: "blue", On: true}` | Controls the blue LED |
-| `RPC.Attest` | `bool` | Returns hardware-derived attestation key |
-
-`serve()` uses `RPC.Recv` and `RPC.Send` for you — you do not need to call them directly.
-
-## Building
-
-| Command | Description |
-|---------|-------------|
-| `make` | Build applet + Trusted OS |
-| `make applet` | Build only the Rust applet |
-| `make trusted_os` | Build the Trusted OS (embeds applet) |
-| `make imx` | Create flashable `.imx` image |
-| `make qemu` | Run in QEMU emulator |
-| `make qemu-gdb` | Run in QEMU with GDB on port 1234 |
-| `make clean` | Remove all build artifacts |
-| `make help` | Show all available targets |
-
-## Running Examples
-
-Copy an example over `src/main.rs`, build the applet, and upload:
+| Example        | RPC method | Description                                 |
+|----------------|------------|---------------------------------------------|
+| `blinky/`      | `Blink`    | Blink the board's blue LED N times          |
+| `crypto/`      | `Random`   | Return N bytes from the hardware RNG        |
+| `attestation/` | `Attest`   | Return a hardware-derived attestation key   |
+| `square/`      | `Square`   | `x → x²`, wrapped in a Bun HTTP shim — see [`examples/square/README.md`](examples/square/README.md) |
 
 ```bash
-cp examples/blinky/main.rs src/main.rs
-make applet
-node --experimental-strip-types examples/square/upload.ts \
-  target/armv7a-none-eabi/release/trusted_applet
-
-# Then drive it via the bridge:
 printf '{"Method":"Blink","Input":"3"}\n' | nc 10.0.0.1 4000
 ```
 
-## Flashing to USB Armory MK II
+## Testing
 
-1. Build the `.imx` image:
-   ```bash
-   make imx
-   ```
-
-2. Set the boot switch to **Serial Download** mode (towards the microSD slot, no card inserted)
-
-3. Connect USB and flash:
-   ```bash
-   imx_usb bin/trusted_os.imx
-   ```
-
-4. Alternatively, write to eMMC or microSD using [armory-ums](https://github.com/usbarmory/armory-ums)
-
-## Connecting via SSH
-
-When running on hardware with USB networking enabled, the Trusted OS starts an SSH server:
+Three of the examples have automated tests that run against a physical device and verify behavior without human observation:
 
 ```bash
-ssh 10.0.0.1
+sudo -v                         # prime sudo so the runner can re-arm the host IP between reboots
+./scripts/armory-link.sh        # bring up the USB link
+bun test                        # ~45 s: uploads each example, runs assertions over the bridge
 ```
 
-## Prerequisites
+Covered:
+- `examples/square/` — arithmetic correctness + i64 saturation
+- `examples/crypto/` — RNG output shape + entropy between successive calls
+- `examples/attestation/` — DerivedKey format + per-device determinism
 
-| Tool | Purpose | Install |
-|------|---------|---------|
-| Rust nightly | Compile the applet | `rustup` (automatic via `rust-toolchain.toml`) |
-| arm-none-eabi-ld | Link bare-metal ARM binary | `brew install arm-none-eabi-binutils` |
-| Go 1.26+ | Build the Trusted OS | `brew install go` |
-| TamaGo compiler | Bare-metal Go for ARM | Built by `setup.sh` |
-| QEMU | Emulation testing | `brew install qemu` |
-| mkimage | `.imx` image creation | `brew install u-boot-tools` |
+Not covered:
+- `examples/blinky/` — requires visually watching the blue LED. After running the tests, your `src/main.rs` is whatever the last test wrote there; `git checkout src/main.rs` to restore the starter.
 
-Run `./scripts/setup.sh` to install everything automatically.
+## Syscalls
+
+The `gotee_syscall` crate provides:
+
+| Function                               | Description                               |
+|----------------------------------------|-------------------------------------------|
+| `serve(handler)`                       | Run the applet dispatch loop              |
+| `println!(...)` / `log!(...)`          | Print to the Trusted OS console           |
+| `exit()`                               | Terminate the applet                      |
+| `nanotime() -> u64`                    | System time in nanoseconds                |
+| `getrandom(&mut buf)`                  | Hardware random bytes                     |
+| `rpc_request(&data)` / `rpc_response(&mut buf)` | Raw JSON-RPC into the Trusted OS |
+
+## RPC services (Trusted OS → applet)
+
+The applet can call these methods on the Trusted OS:
+
+| Method       | Description                                 |
+|--------------|---------------------------------------------|
+| `RPC.Echo`   | Returns the input string (diagnostic)       |
+| `RPC.LED`    | Controls the blue LED                       |
+| `RPC.Attest` | Returns a hardware-derived attestation key  |
 
 ## Resources
 
-- [GoTEE](https://github.com/usbarmory/GoTEE) — Trusted Execution Environment framework
-- [GoTEE-example](https://github.com/usbarmory/GoTEE-example) — Reference implementation (this starter is based on it)
-- [TamaGo](https://github.com/usbarmory/tamago) — Bare metal Go for ARM
-- [USB Armory Wiki](https://github.com/usbarmory/usbarmory/wiki) — Hardware documentation
-- [Embedded Rust Book](https://docs.rust-embedded.org/book/) — `#![no_std]` Rust guide
+- [GoTEE](https://github.com/usbarmory/GoTEE) — TEE framework this is built on
+- [GoTEE-example](https://github.com/usbarmory/GoTEE-example) — upstream reference
+- [TamaGo](https://github.com/usbarmory/tamago) — bare-metal Go for ARM
+- [USB Armory Wiki](https://github.com/usbarmory/usbarmory/wiki)
+- [Embedded Rust Book](https://docs.rust-embedded.org/book/)
 
 ## License
 
-Based on [GoTEE-example](https://github.com/usbarmory/GoTEE-example) by the GoTEE Authors. See LICENSE.
+Based on [GoTEE-example](https://github.com/usbarmory/GoTEE-example) by the GoTEE Authors. See `LICENSE`.

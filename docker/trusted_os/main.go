@@ -1,11 +1,8 @@
 // GoTEE Trusted OS for the USB Armory MK II.
 //
-// This is the Secure World system-mode component that:
-//   - Initializes TrustZone hardware
-//   - Loads and supervises the Rust Trusted Applet
-//   - Handles syscalls from the applet
-//   - Provides RPC services (LED, attestation, echo)
-//   - Exposes an SSH console over USB networking
+// Secure World system-mode component: initializes hardware, loads and
+// supervises the Rust Trusted Applet, exposes a JSON/TCP bridge and SSH
+// server over USB networking (CDC-ECM at 10.0.0.1:4000 and :22).
 //
 // Users should NOT need to modify this file. Edit src/main.rs instead.
 
@@ -48,18 +45,9 @@ var ramSize uint32 = SecureSize
 
 const (
 	sshPort = 22
-	// USB CDC-ECM peer addresses on real hardware. imx-usbnet exposes
-	// the device as 10.0.0.1 and the host side uses the paired MAC.
 	ip      = "10.0.0.1"
 	mac     = "1a:55:89:a2:69:41"
 	hostMAC = "1a:55:89:a2:69:42"
-
-	// Under QEMU's mcimx6ul-evk we attach a SLIRP user-mode NIC to one
-	// of the i.MX6UL ENET MACs; SLIRP hands out 10.0.2.15 as the default
-	// DHCP lease, so we statically claim that address to match what
-	// hostfwd=tcp::4000-:4000 forwards to.
-	qemuIP  = "10.0.2.15"
-	qemuMAC = "1a:55:89:a2:69:41"
 )
 
 func init() {
@@ -67,50 +55,40 @@ func init() {
 	log.SetOutput(os.Stdout)
 
 	initMemory()
-
-	// Relocate DMA to Secure region
 	dma.Init(SecureDMAStart, SecureDMASize)
 
-	if imx6ul.Native {
-		switch imx6ul.Family {
-		case imx6ul.IMX6UL:
-			imx6ul.SetARMFreq(imx6ul.Freq528)
-			imx6ul.CAAM.DeriveKeyMemory = dma.Default()
-			imx6ul.BEE.Init()
-			defer imx6ul.BEE.Lock()
-			if err := imx6ul.BEE.Enable(AppletPhysicalStart, 0); err != nil {
-				log.Fatalf("SM could not activate BEE: %v", err)
-			}
-		case imx6ul.IMX6ULL:
-			imx6ul.SetARMFreq(imx6ul.FreqMax)
-			imx6ul.DCP.Init()
-			imx6ul.DCP.DeriveKeyMemory = dma.Default()
+	switch imx6ul.Family {
+	case imx6ul.IMX6UL:
+		imx6ul.SetARMFreq(imx6ul.Freq528)
+		imx6ul.CAAM.DeriveKeyMemory = dma.Default()
+		imx6ul.BEE.Init()
+		defer imx6ul.BEE.Lock()
+		if err := imx6ul.BEE.Enable(AppletPhysicalStart, 0); err != nil {
+			log.Fatalf("SM could not activate BEE: %v", err)
 		}
-
-		debugConsole, _ := usbarmory.DetectDebugAccessory(250 * time.Millisecond)
-		<-debugConsole
+	case imx6ul.IMX6ULL:
+		imx6ul.SetARMFreq(imx6ul.FreqMax)
+		imx6ul.DCP.Init()
+		imx6ul.DCP.DeriveKeyMemory = dma.Default()
 	}
+
+	debugConsole, _ := usbarmory.DetectDebugAccessory(250 * time.Millisecond)
+	<-debugConsole
 }
 
 func main() {
-	banner := fmt.Sprintf("%s/%s (%s) • GoTEE Trusted OS (Secure World)",
+	log.Printf("%s/%s (%s) • GoTEE Trusted OS (Secure World)",
 		runtime.GOOS, runtime.GOARCH, runtime.Version())
-	log.Print(banner)
 
-	// Load the Rust Trusted Applet — on real hardware, prefer a newer
-	// one persisted on SD by the host uploader; otherwise use the
-	// embedded default so the device always has a rescue applet
-	// available. QEMU skips the SD path entirely: mcimx6ul-evk does not
-	// model SDHCI card-detect the way the tamago driver expects and
-	// Detect() will block forever.
+	// Prefer a newer applet persisted on SD by the host uploader over the
+	// embedded default. The embedded applet is the rescue path: if the SD
+	// region is blank or corrupt, the device still boots something.
 	appletBytes := taELF
-	if imx6ul.Native {
-		if elf, ok := readAppletFromSD(); ok {
-			log.Printf("SM loaded applet from SD (%d bytes)", len(elf))
-			appletBytes = elf
-		} else {
-			log.Print("SM no applet on SD, using embedded default")
-		}
+	if elf, ok := readAppletFromSD(); ok {
+		log.Printf("SM loaded applet from SD (%d bytes)", len(elf))
+		appletBytes = elf
+	} else {
+		log.Print("SM no applet on SD, using embedded default")
 	}
 
 	ta, err := loadApplet(appletBytes)
@@ -118,37 +96,13 @@ func main() {
 		log.Fatalf("SM failed to load applet: %v", err)
 	}
 
-	if !imx6ul.Native {
-		// QEMU mode: imx-usbnet needs USB device mode that mcimx6ul-evk
-		// does not emulate. Instead bring up the emulated ENET MAC via
-		// a parallel gVisor netstack and expose the same bridge listener
-		// on :4000 so the host side (curl → /square / upload.ts) behaves
-		// identically to the hardware path.
-		qnet, err := startQEMUNet(qemuIP, qemuMAC)
-		if err != nil {
-			log.Fatalf("SM qemu net: %v", err)
-		}
-
-		bridgeListener, err := qnet.ListenerTCP4(bridgePort)
-		if err != nil {
-			log.Fatalf("SM could not create qemu bridge listener: %v", err)
-		}
-		go startBridge(bridgeListener)
-
-		go runApplet(ta, nil)
-		log.Print("SM running applet (QEMU mode) — bridge on :4000 via ENET1")
-		select {} // park forever; the applet + bridge run in goroutines
-	}
-
-	// Hardware mode: configure TrustZone and start USB networking + SSH
-	if err := configureTrustZone(); err != nil {
-		log.Fatalf("SM failed to configure TrustZone: %v", err)
-	}
-
-	// Run the applet in a goroutine
+	// Note: TZASC + CSU restrictions (tz.go) are intentionally NOT called
+	// here. This starter runs a Trusted Applet in Secure user mode with
+	// no Normal-World OS — there is no second world to isolate against,
+	// and configuring TZASC without also marking USB as Secure would
+	// block the Trusted OS's own USB register access.
 	go runApplet(ta, nil)
 
-	// Start USB networking with SSH console
 	startNetworking()
 }
 
@@ -179,7 +133,7 @@ func startNetworking() {
 	usbarmory.USB1.DeviceMode()
 	usbarmory.USB1.Reset()
 
-	// This never returns
+	// Never returns.
 	usbarmory.USB1.Start(iface.NIC.Device)
 }
 
@@ -234,7 +188,6 @@ func handleSSHChannels(chans <-chan ssh.NewChannel) {
 
 		go func() {
 			defer conn.Close()
-
 			for {
 				line, err := terminal.ReadLine()
 				if err != nil {
