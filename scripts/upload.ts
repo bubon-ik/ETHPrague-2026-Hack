@@ -34,12 +34,23 @@ const [stdout, stderr, exit] = await Promise.all([
   proc.exited,
 ]);
 
-if (exit !== 0) {
-  console.error('upload failed:', stderr.trim() || `nc exited ${exit}`);
+// Expected reply is "ok, rebooting". The device's reset can race past
+// nc's read, so we often see no reply even though the upload landed.
+// BSD nc (macOS) exits 0 in that case; openbsd-netcat (Linux) exits 1.
+// Treat both as probable success and only fail loud on real TCP-level
+// errors (connect refused / host unreachable / no route).
+const connFailed = /refused|unreachable|no route|name or service/i.test(stderr);
+if (connFailed) {
+  console.error('upload failed:', stderr.trim());
   process.exit(1);
 }
 
-// Expected reply is "ok, rebooting". The device's reset can race past
-// nc's read, so we sometimes see no reply at all even though the upload
-// landed. Treat that as success — the next ping/probe will confirm.
-console.log(stdout.trim() || 'ok, probably rebooting (no reply captured)');
+const reply = stdout.trim();
+if (reply) {
+  console.log(reply);
+} else {
+  console.log(`ok, probably rebooting (no reply captured; nc exited ${exit})`);
+  console.log('  verify in ~8s after re-running ./scripts/armory-link.sh:');
+  console.log('    printf \'{"Method":"__probe","Input":""}\\n\' | nc -w 2 10.0.0.1 4000');
+  console.log('  any reply (even {"Output":""}) means the device is back up.');
+}

@@ -1,9 +1,10 @@
 // TCP bridge between a host caller and the Trusted Applet.
 //
-// Exposes a single newline-delimited JSON protocol on the USB networking
-// interface: host writes {"Method","Input"} and reads {"Output"|"Error"}.
-// This is the only entry point Normal World callers have into the applet —
-// CallApplet is what actually drives the dispatch loop in rpc.go.
+// One request per connection. The host opens a TCP connection, writes a
+// single {"Method","Input"} JSON line, reads one {"Output"|"Error"} line,
+// and the server closes. This is the only entry point Normal World
+// callers have into the applet — CallApplet is what actually drives the
+// dispatch loop in rpc.go.
 //
 // Method "__upload" is intercepted here to receive a new applet ELF over
 // the wire, persist it to the SD card, and trigger a platform reset so the
@@ -42,36 +43,37 @@ func startBridge(l net.Listener) {
 	}
 }
 
+// One request per connection: read a single {"Method","Input"}, write
+// one {"Output"|"Error"} reply, close. Closing after the reply means
+// `printf … | nc 10.0.0.1 4000` exits cleanly on every nc variant
+// (BSD on macOS, openbsd-netcat on Linux) without needing -q/-N flags.
 func handleBridgeConn(conn net.Conn) {
 	defer conn.Close()
 
 	dec := json.NewDecoder(conn)
 	enc := json.NewEncoder(conn)
 
-	for {
-		var req bridgeRequest
-		if err := dec.Decode(&req); err != nil {
-			return
-		}
+	var req bridgeRequest
+	if err := dec.Decode(&req); err != nil {
+		return
+	}
 
-		switch req.Method {
-		case "__upload":
-			elf, err := base64.StdEncoding.DecodeString(req.Input)
-			if err != nil {
-				enc.Encode(bridgeReply{Error: "base64: " + err.Error()})
-				continue
-			}
-			if err := writeAppletToSD(elf); err != nil {
-				enc.Encode(bridgeReply{Error: err.Error()})
-				continue
-			}
-			enc.Encode(bridgeReply{Output: "ok, rebooting"})
-			conn.Close()
-			log.Print("SM applet upload accepted, rebooting")
-			triggerReset()
+	switch req.Method {
+	case "__upload":
+		elf, err := base64.StdEncoding.DecodeString(req.Input)
+		if err != nil {
+			enc.Encode(bridgeReply{Error: "base64: " + err.Error()})
 			return
-		default:
-			enc.Encode(bridgeReply{Output: CallApplet(req.Method, req.Input)})
 		}
+		if err := writeAppletToSD(elf); err != nil {
+			enc.Encode(bridgeReply{Error: err.Error()})
+			return
+		}
+		enc.Encode(bridgeReply{Output: "ok, rebooting"})
+		conn.Close()
+		log.Print("SM applet upload accepted, rebooting")
+		triggerReset()
+	default:
+		enc.Encode(bridgeReply{Output: CallApplet(req.Method, req.Input)})
 	}
 }

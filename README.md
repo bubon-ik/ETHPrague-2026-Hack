@@ -7,6 +7,11 @@ Write Rust code that runs inside ARM TrustZone **Secure World** on a [USB Armory
 - USB Armory MK II + a microSD card + a USB-C **data** cable
 - [Docker](https://www.docker.com/) (Desktop on Mac, Engine on Linux)
 - [Rust](https://rustup.rs/) — the repo pins nightly via `rust-toolchain.toml`
+- ARM bare-metal binutils — provides `arm-none-eabi-ld`, the linker Cargo uses for the `armv7a-none-eabi` target. Not bundled with rustup.
+  - Debian/Ubuntu: `sudo apt install binutils-arm-none-eabi`
+  - Fedora: `sudo dnf install arm-none-eabi-binutils-cs`
+  - Arch: `sudo pacman -S arm-none-eabi-binutils`
+  - macOS: `brew install --cask gcc-arm-embedded`
 - `nc` (BSD netcat) — preinstalled on macOS; `sudo apt install netcat-openbsd` on Debian/Ubuntu
 - [Bun](https://bun.sh/) — *optional*, only needed by examples that ship a host-side HTTP shim (e.g. `examples/square/`)
 

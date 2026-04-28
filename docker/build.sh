@@ -31,6 +31,25 @@ cd "$(dirname "$0")/.."
 command -v docker >/dev/null 2>&1 || fail "docker not installed — install Docker Desktop (Mac) or docker-engine (Linux)."
 command -v cargo  >/dev/null 2>&1 || fail "cargo not installed — install via https://rustup.rs (the repo pins nightly via rust-toolchain.toml)."
 
+# arm-none-eabi-ld is the linker Cargo invokes for the armv7a-none-eabi target.
+# It's NOT bundled with rustup, so a fresh Linux box without it gets a cryptic
+# "linker not found" error mid-cargo-build. Pre-check with a platform-aware hint.
+if ! command -v arm-none-eabi-ld >/dev/null 2>&1; then
+    case "$(uname -s)" in
+        Linux)
+            if   command -v apt-get >/dev/null 2>&1; then HINT="sudo apt install binutils-arm-none-eabi"
+            elif command -v dnf     >/dev/null 2>&1; then HINT="sudo dnf install arm-none-eabi-binutils-cs"
+            elif command -v pacman  >/dev/null 2>&1; then HINT="sudo pacman -S arm-none-eabi-binutils"
+            else HINT="install your distro's 'binutils-arm-none-eabi' (or equivalent) package"
+            fi ;;
+        Darwin)
+            HINT="brew install --cask gcc-arm-embedded" ;;
+        *)
+            HINT="install your platform's 'binutils-arm-none-eabi' (or equivalent) package" ;;
+    esac
+    fail "arm-none-eabi-ld not found — needed to link the Rust applet for ARM. Fix: $HINT"
+fi
+
 info "Building Rust applet on host"
 make applet
 
@@ -51,5 +70,19 @@ docker run --rm \
 SIZE=$(wc -c < bin/trusted_os.imx | tr -d ' ')
 info "Build complete: bin/trusted_os.imx ($SIZE bytes)"
 echo
-echo "Next: flash to SD with"
-echo "  ./scripts/flash-sd.sh /dev/diskN"
+case "$(uname -s)" in
+    Linux)
+        echo "Next: find your SD card device, then flash:"
+        echo "  lsblk -o NAME,SIZE,RM,MOUNTPOINTS    # SD card has RM=1; usually /dev/sdX or /dev/mmcblkN"
+        echo "  ./scripts/flash-sd.sh /dev/sdX"
+        ;;
+    Darwin)
+        echo "Next: find your SD card device, then flash:"
+        echo "  diskutil list                        # look for an external/physical disk matching your SD's size"
+        echo "  ./scripts/flash-sd.sh /dev/diskN"
+        ;;
+    *)
+        echo "Next: flash to SD with"
+        echo "  ./scripts/flash-sd.sh /dev/<your-sd-device>"
+        ;;
+esac

@@ -28,6 +28,15 @@ GOENV := GO_EXTLINK_ENABLED=0 CGO_ENABLED=0 GOOS=tamago GOOSPKG=github.com/usbar
 # Host-side: builds the Rust applet via cargo and drops a copy into
 # trusted_os/assets/ so the Go `go:embed` picks it up.
 applet:
+	@command -v arm-none-eabi-ld >/dev/null 2>&1 || { \
+		echo "error: arm-none-eabi-ld not found — needed to link the Rust applet for ARM."; \
+		echo "Install ARM binutils (see README.md → Prerequisites):"; \
+		echo "  Debian/Ubuntu: sudo apt install binutils-arm-none-eabi"; \
+		echo "  Fedora:        sudo dnf install arm-none-eabi-binutils-cs"; \
+		echo "  Arch:          sudo pacman -S arm-none-eabi-binutils"; \
+		echo "  macOS:         brew install --cask gcc-arm-embedded"; \
+		exit 1; \
+	}
 	cargo build --release
 	@mkdir -p $(dir $(APPLET_DEST))
 	cp $(APPLET_ELF) $(APPLET_DEST)
