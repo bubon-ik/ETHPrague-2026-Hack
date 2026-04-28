@@ -16,10 +16,17 @@
 #![no_std]
 #![no_main]
 
-use gotee_syscall::{self, log};
+use gotee_syscall::{self, log, nanotime};
 
 const ON_REQ: &[u8] = br#"{"method":"RPC.LED","params":[{"Name":"blue","On":true}],"id":1}"#;
 const OFF_REQ: &[u8] = br#"{"method":"RPC.LED","params":[{"Name":"blue","On":false}],"id":2}"#;
+
+fn sleep_ms(ms: u64) {
+    let target = nanotime() + ms * 1_000_000;
+    while nanotime() < target {
+        core::hint::spin_loop();
+    }
+}
 
 fn handle(method: &str, input: &[u8], out: &mut [u8]) -> usize {
     match method {
@@ -31,14 +38,10 @@ fn handle(method: &str, input: &[u8], out: &mut [u8]) -> usize {
             for _ in 0..n {
                 gotee_syscall::rpc_request(ON_REQ);
                 let _ = gotee_syscall::rpc_response(&mut resp);
-                for _ in 0..5_000_000u32 {
-                    core::hint::spin_loop();
-                }
+                sleep_ms(250);
                 gotee_syscall::rpc_request(OFF_REQ);
                 let _ = gotee_syscall::rpc_response(&mut resp);
-                for _ in 0..5_000_000u32 {
-                    core::hint::spin_loop();
-                }
+                sleep_ms(250);
             }
 
             let msg = b"ok";
