@@ -9,6 +9,7 @@
     "dev":             "node --env-file=.env --watch src/agent/index.js",
     "agent":           "node --env-file=.env dev/run.js",
     "scenario":        "node --env-file=.env dev/scenario.js",
+    "scenario:real":   "node --env-file=.env dev/scenario-real.js",
     "test":            "node --env-file=.env --experimental-vm-modules node_modules/.bin/jest",
     "test:watch":      "node --env-file=.env --experimental-vm-modules node_modules/.bin/jest --watch",
     "lint":            "eslint src/ tests/",
