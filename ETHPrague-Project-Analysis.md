@@ -19,7 +19,7 @@
 |---------|------|---------------------|
 | **SpaceComputer** | Security + Hardware Identity | Makes Raspberry Pi a trusted security device: secure local storage, hardware identity, tamper-evident logs |
 | **Swarm** | Decentralized Backup | Stores backup manifests, wallet metadata, recovery references |
-| **Umia** | Agentic Workflow | Agent monitors backup health, checks state integrity, triggers recovery |
+| **AI Agent** | Agentic Workflow | Agent monitors backup health, checks state integrity, triggers recovery |
 | **ENS** | Identity / Naming | Human-readable name for the device or recovery endpoint |
 
 ---
@@ -119,7 +119,7 @@ Current project is hardware wallet + backups. Need Ethereum integration:
 - **Multi-sig recovery:** Smart contract requires 2-of-3 approvals for recovery
 - **Recovery policy as code:** Solidity contract defines who can trigger recovery and under what conditions
 
-### 2. Strengthen Umia Agent
+### 2. Strengthen AI Agent
 
 Upgrade from "backup checker" to intelligent agent:
 
