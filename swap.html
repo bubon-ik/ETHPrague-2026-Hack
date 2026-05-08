@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simba Agent — Swap</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+      overflow: hidden;
+      background: #050906;
+      color: #effff2;
+      font-family: Geist, Satoshi, Outfit, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #050906;
+    }
+
+    .matrix-glow {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 64% 42%, rgba(73, 186, 112, 0.12), transparent 31%),
+        linear-gradient(90deg, rgba(5,9,6,0.94) 0%, rgba(5,9,6,0.58) 34%, rgba(5,9,6,0.18) 58%, rgba(5,9,6,0.76) 100%),
+        linear-gradient(180deg, rgba(5,9,6,0.72), rgba(5,9,6,0.1) 42%, rgba(5,9,6,0.7) 100%);
+      mix-blend-mode: normal;
+    }
+
+    .scanlines {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.16;
+      background: repeating-linear-gradient(
+        180deg,
+        rgba(112, 214, 132, 0.16) 0,
+        rgba(112, 214, 132, 0.16) 1px,
+        transparent 1px,
+        transparent 4px
+      );
+    }
+
+    .grain {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.18;
+      background-image:
+        linear-gradient(115deg, rgba(255,255,255,0.035), transparent 22%),
+        repeating-radial-gradient(circle at 17% 31%, rgba(255,255,255,0.08) 0 1px, transparent 1px 4px);
+      mix-blend-mode: overlay;
+    }
+
+    .frame {
+      position: fixed;
+      inset: 22px;
+      z-index: 1;
+      pointer-events: none;
+      border: 1px solid rgba(123, 202, 142, 0.17);
+      clip-path: polygon(0 0, calc(100% - 84px) 0, 100% 84px, 100% 100%, 84px 100%, 0 calc(100% - 84px));
+    }
+
+    .side-rail {
+      position: fixed;
+      z-index: 3;
+      top: 42px;
+      right: clamp(22px, 5vw, 70px);
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      color: rgba(190, 245, 199, 0.72);
+      font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+    }
+
+    main {
+      position: relative;
+      z-index: 2;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: clamp(32px, 6vw, 82px);
+    }
+
+    .swap-shell {
+      width: min(480px, 100%);
+      display: grid;
+      gap: 18px;
+    }
+
+    .swap-head {
+      display: grid;
+      gap: 6px;
+      text-align: center;
+      margin-bottom: 6px;
+    }
+
+    .swap-sub {
+      color: #b7f1c0;
+      font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: clamp(11px, 1.3vw, 13px);
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      text-shadow: 0 1px 18px rgba(73, 186, 112, 0.56);
+    }
+
+    .swap-title {
+      margin: 0;
+      color: #f3fff3;
+      font-size: clamp(32px, 4vw, 44px);
+      font-weight: 860;
+      line-height: 1.1;
+      text-shadow:
+        0 1px 0 rgba(255,255,255,0.28),
+        0 18px 56px rgba(0, 0, 0, 0.78);
+    }
+
+    .swap-card {
+      position: relative;
+      display: grid;
+      gap: 10px;
+      padding: 22px;
+      border: 1px solid rgba(154, 217, 166, 0.22);
+      background: rgba(5, 13, 7, 0.66);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.08),
+        0 24px 48px rgba(0, 0, 0, 0.32);
+    }
+
+    .leg {
+      display: grid;
+      gap: 10px;
+      padding: 16px 18px;
+      border: 1px solid rgba(154, 217, 166, 0.32);
+      background: rgba(13, 32, 17, 0.6);
+    }
+
+    .leg-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .leg-label {
+      color: rgba(190, 245, 199, 0.72);
+      font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .leg-balance {
+      color: rgba(190, 245, 199, 0.6);
+      font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .leg-balance strong {
+      color: #d2ffda;
+    }
+
+    .leg-input-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .amount-input {
+      flex: 1;
+      min-width: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #f0fff2;
+      font-family: Geist, Satoshi, ui-sans-serif, system-ui, sans-serif;
+      font-size: clamp(24px, 3vw, 32px);
+      font-weight: 800;
+      letter-spacing: 0.01em;
+      outline: none;
+    }
+
+    .amount-input::placeholder {
+      color: rgba(183, 241, 192, 0.32);
+    }
+
+    .amount-input[readonly] {
+      color: #d2ffda;
+    }
+
+    .token-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 40px;
+      padding: 0 14px;
+      border: 1px solid rgba(154, 217, 166, 0.62);
+      border-radius: 3px;
+      background: rgba(13, 32, 17, 0.9);
+      color: #f0fff2;
+      font: 800 14px Geist, Satoshi, system-ui, sans-serif;
+      cursor: pointer;
+      transition: border-color 0.32s ease, background 0.32s ease;
+    }
+
+    .token-pill:hover {
+      border-color: rgba(210, 255, 218, 0.72);
+      background: rgba(21, 47, 26, 0.95);
+    }
+
+    .token-symbol {
+      letter-spacing: 0.04em;
+    }
+
+    .token-caret {
+      color: rgba(190, 245, 199, 0.72);
+      font-size: 10px;
+    }
+
+    .token-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #64d67b, #1f5b2c);
+      box-shadow: 0 0 0 1px rgba(154, 217, 166, 0.4);
+    }
+
+    .swap-arrow {
+      position: relative;
+      display: grid;
+      place-items: center;
+      margin: -4px auto;
+      width: 38px;
+      height: 38px;
+      border: 1px solid rgba(154, 217, 166, 0.62);
+      border-radius: 50%;
+      background: rgba(5, 13, 7, 0.95);
+      color: #d2ffda;
+      font-size: 16px;
+      cursor: pointer;
+      z-index: 1;
+      transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.32s ease;
+    }
+
+    .swap-arrow:hover {
+      transform: rotate(180deg);
+      border-color: rgba(210, 255, 218, 0.85);
+    }
+
+    .swap-meta {
+      display: grid;
+      gap: 6px;
+      padding: 12px 14px;
+      border: 1px dashed rgba(154, 217, 166, 0.22);
+      color: rgba(190, 245, 199, 0.78);
+      font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+    }
+
+    .swap-meta-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .swap-meta-row strong {
+      color: #d2ffda;
+    }
+
+    .swap-cta {
+      height: 56px;
+      padding: 0 22px;
+      border: 1px solid rgba(154, 217, 166, 0.62);
+      border-radius: 3px;
+      background: rgba(13, 32, 17, 0.78);
+      color: #f0fff2;
+      font: 800 15px Geist, Satoshi, system-ui, sans-serif;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.12),
+        0 14px 34px rgba(0, 0, 0, 0.28);
+      transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.32s ease, background 0.32s ease;
+    }
+
+    .swap-cta:hover {
+      transform: translateY(-2px);
+      border-color: rgba(210, 255, 218, 0.72);
+      background: rgba(21, 47, 26, 0.9);
+    }
+
+    .swap-cta:active {
+      transform: translateY(1px) scale(0.99);
+    }
+
+    .swap-status {
+      min-height: 18px;
+      text-align: center;
+      color: #b6eec1;
+      font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: opacity 0.32s ease, transform 0.32s ease;
+    }
+
+    .swap-status.is-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .back-link {
+      justify-self: center;
+      margin-top: 4px;
+      color: rgba(190, 245, 199, 0.72);
+      font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      text-decoration: none;
+      transition: color 0.32s ease;
+    }
+
+    .back-link:hover {
+      color: #d2ffda;
+    }
+
+    /* Token select modal */
+    .token-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(5, 9, 6, 0.72);
+      backdrop-filter: blur(6px);
+    }
+
+    .token-modal.is-open {
+      display: flex;
+    }
+
+    .token-modal-card {
+      width: min(380px, 100%);
+      max-height: 70vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      border: 1px solid rgba(154, 217, 166, 0.32);
+      background: rgba(5, 13, 7, 0.94);
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+    }
+
+    .token-modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 18px;
+      border-bottom: 1px solid rgba(154, 217, 166, 0.18);
+      color: #d2ffda;
+      font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .token-modal-close {
+      border: 0;
+      background: transparent;
+      color: #d2ffda;
+      font-size: 20px;
+      cursor: pointer;
+    }
+
+    .token-modal-list {
+      overflow: auto;
+      padding: 6px 0;
+    }
+
+    .token-option {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 18px;
+      border: 0;
+      background: transparent;
+      color: #f0fff2;
+      font: 700 14px Geist, Satoshi, system-ui, sans-serif;
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.2s ease;
+    }
+
+    .token-option:hover {
+      background: rgba(21, 47, 26, 0.7);
+    }
+
+    .token-option .symbol {
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+
+    .token-option .name {
+      margin-left: auto;
+      color: rgba(190, 245, 199, 0.6);
+      font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    @media (max-width: 760px) {
+      .side-rail,
+      .frame {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="matrix" aria-hidden="true"></canvas>
+  <div class="matrix-glow" aria-hidden="true"></div>
+  <div class="scanlines" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+  <div class="frame" aria-hidden="true"></div>
+  <div class="side-rail" aria-hidden="true">binary ascent</div>
+
+  <main>
+    <div class="swap-shell">
+      <div class="swap-head">
+        <div class="swap-sub">Token Exchange</div>
+        <h1 class="swap-title">Swap</h1>
+      </div>
+
+      <div class="swap-card">
+        <div class="leg" data-leg="from">
+          <div class="leg-row">
+            <span class="leg-label">From</span>
+            <span class="leg-balance">Balance: <strong data-balance>2.4815</strong></span>
+          </div>
+          <div class="leg-input-row">
+            <input
+              type="text"
+              inputmode="decimal"
+              class="amount-input"
+              data-amount="from"
+              placeholder="0.0"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="token-pill" data-pick="from">
+              <span class="token-icon"></span>
+              <span class="token-symbol">ETH</span>
+              <span class="token-caret">▾</span>
+            </button>
+          </div>
+        </div>
+
+        <button class="swap-arrow" aria-label="Switch tokens" data-switch>↓</button>
+
+        <div class="leg" data-leg="to">
+          <div class="leg-row">
+            <span class="leg-label">To</span>
+            <span class="leg-balance">Balance: <strong data-balance>1 240.00</strong></span>
+          </div>
+          <div class="leg-input-row">
+            <input
+              type="text"
+              inputmode="decimal"
+              class="amount-input"
+              data-amount="to"
+              placeholder="0.0"
+              readonly
+            />
+            <button class="token-pill" data-pick="to">
+              <span class="token-icon"></span>
+              <span class="token-symbol">USDC</span>
+              <span class="token-caret">▾</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="swap-meta">
+          <div class="swap-meta-row">
+            <span>Rate</span>
+            <strong data-rate>1 ETH ≈ 3 200 USDC</strong>
+          </div>
+          <div class="swap-meta-row">
+            <span>Slippage</span>
+            <strong>0.5%</strong>
+          </div>
+          <div class="swap-meta-row">
+            <span>Network fee</span>
+            <strong>~$0.42</strong>
+          </div>
+        </div>
+
+        <button class="swap-cta" data-swap>Swap tokens</button>
+        <div class="swap-status" data-status></div>
+      </div>
+
+      <a href="index.html" class="back-link">← Back</a>
+    </div>
+  </main>
+
+  <div class="token-modal" data-modal>
+    <div class="token-modal-card">
+      <div class="token-modal-head">
+        <span>Select token</span>
+        <button class="token-modal-close" data-modal-close aria-label="Close">×</button>
+      </div>
+      <div class="token-modal-list" data-modal-list></div>
+    </div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    if (params.get('from') !== 'index') {
+      location.replace('index.html');
+    }
+  </script>
+  <script>
+    const canvas = document.getElementById("matrix");
+    const ctx = canvas.getContext("2d");
+    const bits = ["0", "1"];
+    let width = 0;
+    let height = 0;
+    let columns = [];
+    let fontSize = 22;
+
+    function reset() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      fontSize = width < 700 ? 17 : 22;
+      const count = Math.ceil(width / fontSize) + 4;
+      columns = Array.from({ length: count }, (_, index) => ({
+        x: index * fontSize,
+        y: -height + Math.random() * height * 2.4,
+        speed: 2.6 + Math.random() * 4.3,
+        length: 16 + Math.floor(Math.random() * 32),
+        fade: 0.58 + Math.random() * 0.42
+      }));
+    }
+
+    function draw() {
+      ctx.fillStyle = "rgba(5, 9, 6, 0.105)";
+      ctx.fillRect(0, 0, width, height);
+      ctx.font = `${fontSize}px "SF Mono", "JetBrains Mono", Consolas, monospace`;
+      ctx.textAlign = "center";
+
+      for (const column of columns) {
+        for (let i = 0; i < column.length; i += 1) {
+          const char = bits[(Math.random() * bits.length) | 0];
+          const y = column.y + i * fontSize;
+          const alpha = Math.max(0, 1 - i / column.length) * column.fade;
+          const isHead = i === 0;
+
+          ctx.fillStyle = isHead
+            ? "rgba(231, 255, 235, 0.86)"
+            : `rgba(100, 214, 123, ${alpha})`;
+          ctx.shadowColor = "#64d67b";
+          ctx.shadowBlur = isHead ? 10 : 4;
+          ctx.fillText(char, column.x, y);
+        }
+
+        column.y -= column.speed;
+        if (column.y + column.length * fontSize < -fontSize) {
+          column.y = height + Math.random() * height * 0.4;
+          column.speed = 2.6 + Math.random() * 4.3;
+          column.length = 16 + Math.floor(Math.random() * 32);
+          column.fade = 0.58 + Math.random() * 0.42;
+        }
+      }
+
+      requestAnimationFrame(draw);
+    }
+
+    window.addEventListener("resize", reset);
+    reset();
+    draw();
+  </script>
+  <script>
+    // Swap logic with 0x proxy fallback.
+    const TOKENS = {
+      ETH:  { symbol: "ETH",  name: "Wrapped Ether", usd: 3200,  balance: "2.4815", address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", decimals: 18 },
+      USDC: { symbol: "USDC", name: "USD Coin",      usd: 1,     balance: "1 240.00", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
+      USDT: { symbol: "USDT", name: "Tether",        usd: 1,     balance: "980.50", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
+      DAI:  { symbol: "DAI",  name: "Dai",           usd: 1,     balance: "412.10", address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", decimals: 18 },
+      WBTC: { symbol: "WBTC", name: "Wrapped BTC",   usd: 64000, balance: "0.0182", address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", decimals: 8 },
+      ARB:  { symbol: "ARB",  name: "Arbitrum",      usd: 0.92,  balance: "320.00", address: "0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1", decimals: 18 },
+      OP:   { symbol: "OP",   name: "Optimism",      usd: 1.85,  balance: "210.00", address: "0x4200000000000000000000000000000000000042", decimals: 18 },
+      MATIC:{ symbol: "MATIC",name: "Polygon",       usd: 0.78,  balance: "1 020.00", address: "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0", decimals: 18 }
+    };
+
+    const state = { from: "ETH", to: "USDC", amount: "", lastPrice: null };
+
+    const fromInput = document.querySelector('[data-amount="from"]');
+    const toInput   = document.querySelector('[data-amount="to"]');
+    const fromPill  = document.querySelector('[data-pick="from"]');
+    const toPill    = document.querySelector('[data-pick="to"]');
+    const fromBalance = document.querySelector('[data-leg="from"] [data-balance]');
+    const toBalance   = document.querySelector('[data-leg="to"] [data-balance]');
+    const rateEl    = document.querySelector('[data-rate]');
+    const switchBtn = document.querySelector('[data-switch]');
+    const swapBtn   = document.querySelector('[data-swap]');
+    const statusEl  = document.querySelector('[data-status]');
+    const modal     = document.querySelector('[data-modal]');
+    const modalList = document.querySelector('[data-modal-list]');
+    const modalClose= document.querySelector('[data-modal-close]');
+
+    let pickTarget = null;
+    let priceTimer = null;
+
+    function fmt(n) {
+      if (!isFinite(n)) return "0.0";
+      if (n === 0) return "0.0";
+      if (n >= 1) return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+      return n.toLocaleString("en-US", { maximumFractionDigits: 6 });
+    }
+
+    function amountToUnits(value, decimals) {
+      const clean = cleanAmount(value);
+      if (!clean) return "0";
+      const [whole, fraction = ""] = clean.split(".");
+      const padded = (fraction + "0".repeat(decimals)).slice(0, decimals);
+      return (BigInt(whole || "0") * (10n ** BigInt(decimals)) + BigInt(padded || "0")).toString();
+    }
+
+    function unitsToAmount(value, decimals) {
+      const units = BigInt(value || "0");
+      const base = 10n ** BigInt(decimals);
+      const whole = units / base;
+      const fraction = units % base;
+      const fractionText = fraction.toString().padStart(decimals, "0").replace(/0+$/, "");
+      return fractionText ? `${whole}.${fractionText}` : whole.toString();
+    }
+
+    function renderTokens() {
+      const fT = TOKENS[state.from];
+      const tT = TOKENS[state.to];
+      fromPill.querySelector('.token-symbol').textContent = fT.symbol;
+      toPill.querySelector('.token-symbol').textContent = tT.symbol;
+      fromBalance.textContent = fT.balance;
+      toBalance.textContent = tT.balance;
+      const rate = fT.usd / tT.usd;
+      rateEl.textContent = `1 ${fT.symbol} ≈ ${fmt(rate)} ${tT.symbol}`;
+      recalc();
+    }
+
+    function recalc() {
+      const raw = parseFloat((fromInput.value || "").replace(/[^0-9.]/g, ""));
+      if (!isFinite(raw) || raw <= 0) {
+        toInput.value = "";
+        return;
+      }
+      const fT = TOKENS[state.from];
+      const tT = TOKENS[state.to];
+      const out = (raw * fT.usd) / tT.usd;
+      toInput.value = fmt(out);
+    }
+
+    async function request0x(endpoint) {
+      const fT = TOKENS[state.from];
+      const tT = TOKENS[state.to];
+      const sellAmount = amountToUnits(fromInput.value, fT.decimals);
+      const params = new URLSearchParams({
+        chainId: "1",
+        sellToken: fT.address,
+        buyToken: tT.address,
+        sellAmount
+      });
+
+      const response = await fetch(`/api/swap/${endpoint}?${params.toString()}`);
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || payload.message || "0x quote failed");
+      }
+      return payload;
+    }
+
+    function scheduleLivePrice() {
+      clearTimeout(priceTimer);
+      const raw = parseFloat((fromInput.value || "").replace(/[^0-9.]/g, ""));
+      if (!isFinite(raw) || raw <= 0) return;
+
+      priceTimer = setTimeout(async () => {
+        try {
+          const price = await request0x("price");
+          state.lastPrice = price;
+          if (price.buyAmount) {
+            const tT = TOKENS[state.to];
+            toInput.value = fmt(Number(unitsToAmount(price.buyAmount, tT.decimals)));
+          }
+          showStatus("0x.price: live route ready");
+        } catch (error) {
+          state.lastPrice = null;
+          showStatus(`0x.price: ${error.message}; using mock route`);
+        }
+      }, 450);
+    }
+
+    function cleanAmount(value) {
+      const [head, ...tail] = value.replace(/[^0-9.]/g, "").split(".");
+      return tail.length ? `${head}.${tail.join("")}` : head;
+    }
+
+    fromInput.addEventListener('input', () => {
+      const cleaned = cleanAmount(fromInput.value);
+      if (fromInput.value !== cleaned) {
+        fromInput.value = cleaned;
+      }
+      hideStatus();
+      recalc();
+      scheduleLivePrice();
+    });
+
+    switchBtn.addEventListener('click', () => {
+      [state.from, state.to] = [state.to, state.from];
+      hideStatus();
+      renderTokens();
+      scheduleLivePrice();
+    });
+
+    function openPicker(target) {
+      pickTarget = target;
+      modalList.innerHTML = "";
+      Object.values(TOKENS).forEach((t) => {
+        const otherSide = target === "from" ? state.to : state.from;
+        if (t.symbol === otherSide) return;
+        const btn = document.createElement('button');
+        btn.className = 'token-option';
+        btn.innerHTML = `
+          <span class="token-icon"></span>
+          <span class="symbol">${t.symbol}</span>
+          <span class="name">${t.name}</span>
+        `;
+        btn.addEventListener('click', () => {
+          state[target] = t.symbol;
+          closePicker();
+          hideStatus();
+          renderTokens();
+          scheduleLivePrice();
+        });
+        modalList.appendChild(btn);
+      });
+      modal.classList.add('is-open');
+    }
+
+    function closePicker() {
+      modal.classList.remove('is-open');
+      pickTarget = null;
+    }
+
+    fromPill.addEventListener('click', () => openPicker('from'));
+    toPill.addEventListener('click', () => openPicker('to'));
+    modalClose.addEventListener('click', closePicker);
+    modal.addEventListener('click', (e) => { if (e.target === modal) closePicker(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePicker(); });
+
+    function hideStatus() {
+      statusEl.classList.remove('is-visible');
+      statusEl.textContent = '';
+    }
+
+    function showStatus(text) {
+      statusEl.textContent = text;
+      statusEl.classList.add('is-visible');
+    }
+
+    swapBtn.addEventListener('click', async () => {
+      const raw = parseFloat((fromInput.value || "").replace(/[^0-9.]/g, ""));
+      if (!isFinite(raw) || raw <= 0) {
+        showStatus('swap.input: enter an amount to continue');
+        return;
+      }
+      showStatus("0x.quote: requesting transaction data");
+      try {
+        const quote = await request0x("quote");
+        state.lastPrice = quote;
+        showStatus(`0x.quote: ready ${fmt(raw)} ${state.from} → ${toInput.value} ${state.to}`);
+      } catch (error) {
+        showStatus(`0x.quote: ${error.message}`);
+      }
+    });
+
+    renderTokens();
+  </script>
+</body>
+</html>
