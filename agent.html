@@ -403,14 +403,33 @@
       chip.addEventListener("click", () => setPrompt(chip.textContent.trim()));
     });
 
-    sendButton.addEventListener("click", () => {
+    sendButton.addEventListener("click", async () => {
       const prompt = textarea.value.trim();
       if (!prompt) {
         response.textContent = "agent.input: waiting for a request";
-      } else {
-        response.textContent = "agent.request: queued for API connection";
+        response.classList.add("is-visible");
+        return;
       }
+
+      response.textContent = "agent.request: processing...";
       response.classList.add("is-visible");
+
+      try {
+        const res = await fetch("/api/agent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt })
+        });
+        const data = await res.json();
+        
+        if (data.text) {
+          response.textContent = data.text;
+        } else {
+          response.textContent = "agent.error: received invalid response";
+        }
+      } catch (err) {
+        response.textContent = "agent.error: connection failed";
+      }
     });
   </script>
 </body>

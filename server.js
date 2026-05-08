@@ -1,12 +1,28 @@
-const http = require("http");
-const fs = require("fs");
-const path = require("path");
-const { URL } = require("url");
+import http from "http";
+import fs from "fs";
+import path from "path";
+import { URL, fileURLToPath } from "url";
+
+// Boot firmware mocks for the agent
+import './firmware/mock/wallet.js';
+import './firmware/mock/rpc.js';
+import './firmware/mock/price.js';
+import './firmware/mock/ens.js';
+import './firmware/mock/history.js';
+import './firmware/mock/ui.js';
+
+import { router } from './src/agent/router.js';
+import { ContextManager } from './src/agent/context.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const ROOT = __dirname;
 const PORT = Number(process.env.PORT || 4173);
 const ZEROX_BASE_URL = "https://api.0x.org";
 const PUBLIC_FILES = new Set(["/", "/index.html", "/swap.html", "/send.html", "/agent.html"]);
+
+const agentContext = new ContextManager();
 
 loadEnv(path.join(ROOT, ".env"));
 
@@ -113,6 +129,21 @@ async function proxy0x(reqUrl, res, endpoint) {
 
 const server = http.createServer((req, res) => {
   const reqUrl = new URL(req.url, `http://${req.headers.host}`);
+
+  if (reqUrl.pathname === "/api/agent" && req.method === "POST") {
+    let body = "";
+    req.on("data", chunk => body += chunk);
+    req.on("end", async () => {
+      try {
+        const { prompt } = JSON.parse(body);
+        const result = await router.dispatch(prompt, agentContext);
+        sendJson(res, 200, result);
+      } catch (err) {
+        sendJson(res, 400, { error: "Invalid request body" });
+      }
+    });
+    return;
+  }
 
   if (req.method !== "GET") {
     sendText(res, 405, "Method not allowed");

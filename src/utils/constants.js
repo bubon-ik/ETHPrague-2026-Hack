@@ -33,6 +33,7 @@ export const INTENTS = {
   ENS_SEARCH:     'ens.search',
   ENS_RENEW:      'ens.renew',
   ENS_TRANSFER:   'ens.transfer',
+  ENS_STATUS:     'ens.status',
   AUTO_CREATE:    'automation.create',
   AUTO_LIST:      'automation.list',
   AUTO_CANCEL:    'automation.cancel',
@@ -40,6 +41,7 @@ export const INTENTS = {
   QUERY_BALANCE:  'query.balance',
   QUERY_HISTORY:  'query.history',
   QUERY_GAS:      'query.gas',
+  QUERY_CONTACTS: 'query.contacts',
   HELP:           'help',
   UNKNOWN:        'unknown',
 };

@@ -28,6 +28,20 @@ export function formatEth(wei) {
 }
 
 /**
+ * Convert BigInt to formatted string with decimals.
+ * @param {bigint} value
+ * @param {number} decimals
+ * @returns {string}
+ */
+export function formatUnits(value, decimals = 18) {
+  const divisor = BigInt(10 ** decimals);
+  const integerPart = value / divisor;
+  const fractionalPart = value % divisor;
+  const fractionalStr = fractionalPart.toString().padStart(decimals, '0').slice(0, 4);
+  return `${integerPart}.${fractionalStr}`;
+}
+
+/**
  * Format a USD value with commas and 2 decimal places.
  * @param {number} usd
  * @returns {string}

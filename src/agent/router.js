@@ -14,11 +14,15 @@ import { handlePortfolio } from '../actions/portfolio.js';
 import { handleEnsSearch } from '../actions/ens/search.js';
 import { handleEnsRenew } from '../actions/ens/renew.js';
 import { handleEnsTransfer } from '../actions/ens/transfer.js';
+import { handleEnsStatus } from '../actions/ens/status.js';
 import { handleAutomationCreate } from '../automation/parser.js';
 import { handleAutomationList, handleAutomationCancel } from '../automation/store.js';
 import { handlePriceQuery } from '../price/oracle.js';
-import { handleBalanceQuery } from '../rpc/eth.js';
-import { handleHistoryQuery } from '../rpc/client.js';
+import { handleQueryBalance } from '../actions/query/balance.js';
+import { handleQueryHistory } from '../actions/query/history.js';
+import { handleQueryGas } from '../actions/query/gas.js';
+import { handleQueryContacts } from '../actions/query/contacts.js';
+import { handleHelp } from '../actions/help.js';
 import { logger } from '../utils/logger.js';
 import { INTENTS } from '../utils/constants.js';
 
@@ -32,6 +36,7 @@ const INTENT_RULES = [
   // ENS intents
   { intent: INTENTS.ENS_RENEW,       pattern: /\b(renew|extend|renewal)\b.*\.(eth|crypto)/i },
   { intent: INTENTS.ENS_TRANSFER,    pattern: /\b(transfer|give)\b.*\.(eth|crypto)/i },
+  { intent: INTENTS.ENS_STATUS,      pattern: /\b(when|expire|status|valid|active|check|info)\b.*\.(eth|crypto)/i },
   { intent: INTENTS.ENS_SEARCH,      pattern: /\b(ens|domain|\.eth|want\s+the\s+name|register)\b/i },
 
   // Automation intents
@@ -43,6 +48,7 @@ const INTENT_RULES = [
   { intent: INTENTS.QUERY_HISTORY,   pattern: /\b(history|transactions|last\s+\d+\s+tx|recent\s+activity|what\s+did\s+i\s+send)\b/i },
   { intent: INTENTS.QUERY_BALANCE,   pattern: /\b(balance|holdings|portfolio|how\s+much\s+do\s+i\s+have|what\s+do\s+i\s+own)\b/i },
   { intent: INTENTS.QUERY_PRICE,     pattern: /\b(price|rate|worth|cost|value|how\s+much\s+is|trading\s+at)\b/i },
+  { intent: INTENTS.QUERY_CONTACTS,  pattern: /\b(contacts|address\s+book|who\s+did\s+i|who\s+are)\b/i },
 
   // Help
   { intent: INTENTS.HELP,            pattern: /\b(help|what\s+can\s+you\s+do|commands|guide)\b/i },
@@ -56,12 +62,15 @@ const HANDLERS = {
   [INTENTS.ENS_SEARCH]:    handleEnsSearch,
   [INTENTS.ENS_RENEW]:     handleEnsRenew,
   [INTENTS.ENS_TRANSFER]:  handleEnsTransfer,
+  [INTENTS.ENS_STATUS]:    handleEnsStatus,
   [INTENTS.AUTO_CREATE]:   handleAutomationCreate,
   [INTENTS.AUTO_LIST]:     handleAutomationList,
   [INTENTS.AUTO_CANCEL]:   handleAutomationCancel,
   [INTENTS.QUERY_PRICE]:   handlePriceQuery,
-  [INTENTS.QUERY_BALANCE]: handleBalanceQuery,
-  [INTENTS.QUERY_HISTORY]: handleHistoryQuery,
+  [INTENTS.QUERY_BALANCE]: handleQueryBalance,
+  [INTENTS.QUERY_HISTORY]: handleQueryHistory,
+  [INTENTS.QUERY_GAS]:     handleQueryGas,
+  [INTENTS.QUERY_CONTACTS]: handleQueryContacts,
   [INTENTS.HELP]:          handleHelp,
 };
 
@@ -98,21 +107,3 @@ export const router = {
     return INTENTS.UNKNOWN;
   },
 };
-
-/**
- * Built-in help handler.
- * @returns {Promise<{text: string}>}
- */
-async function handleHelp() {
-  return {
-    text: `Here's what I can do:
-
-💸 Transactions: "Send 0.1 ETH to vitalik.eth", "Swap 100 USDC to ETH", "Buy 0.5 ETH"
-🔷 ENS: "I want the domain greenparrot.eth", "Renew vitalik.eth for 2 years"
-⏱️  Automation: "If ETH < $1000, buy 5 ETH", "Every Monday, swap 50 USDC to ETH"
-📊 Portfolio: "What's my balance?", "Show my portfolio", "What's ETH worth?"
-📜 History: "Show my last 5 transactions"
-
-Ask me anything!`,
-  };
-}

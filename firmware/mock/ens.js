@@ -11,6 +11,12 @@ const REGISTERED_NAMES = {
   'alice.eth':       '0x1234567890123456789012345678901234567890',
 };
 
+const EXPIRIES = {
+  'vitalik.eth':     Date.now() + 1000 * 60 * 60 * 24 * 365 * 2, // 2 years
+  'greenparrot.eth': Date.now() + 1000 * 60 * 60 * 24 * 30,      // 30 days
+  'alice.eth':       Date.now() - 1000 * 60 * 60 * 24 * 2,       // Expired 2 days ago
+};
+
 const SUGGESTIONS = {
   'greenparrot': ['greenparrot42.eth', 'the-greenparrot.eth', 'greenparrots.eth', 'greenparrot-nft.eth', 'mygreen-parrot.eth'],
 };
@@ -24,6 +30,16 @@ export const ens = {
   async resolve(name) {
     await delay(20);
     return REGISTERED_NAMES[name.toLowerCase()] || null;
+  },
+
+  /**
+   * Get the expiration timestamp of an ENS name.
+   * @param {string} name
+   * @returns {Promise<number|null>}
+   */
+  async getExpiry(name) {
+    await delay(20);
+    return EXPIRIES[name.toLowerCase()] || null;
   },
 
   /**
