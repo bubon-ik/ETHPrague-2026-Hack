@@ -36,7 +36,7 @@ const INTENT_RULES = [
 
   // Automation intents
   { intent: INTENTS.AUTO_CANCEL,     pattern: /\b(cancel\s+rule|remove\s+automation|stop\s+watching)\b/i },
-  { intent: INTENTS.AUTO_LIST,       pattern: /\b(my\s+rules|active\s+automations|what.s\s+scheduled)\b/i },
+  { intent: INTENTS.AUTO_LIST,       pattern: /\b(my\s+rules|active\s+automations?|what.s\s+scheduled|show.*rules?|list.*auto|active\s+rules?)\b/i },
   { intent: INTENTS.AUTO_CREATE,     pattern: /\b(if|when|every|automatically|whenever)\b.*(then|do|buy|sell|swap|send)/i },
 
   // Query intents
