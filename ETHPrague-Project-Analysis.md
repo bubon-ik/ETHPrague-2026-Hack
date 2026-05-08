@@ -44,7 +44,7 @@
 │  └──────────────┬──────────────────────┘    │
 │                 │                           │
 │  ┌──────────────▼──────────────────────┐    │
-│  │  Umia Agent                         │    │
+│  │   AI Agent                          │    │
 │  │  - Monitor backup health            │    │
 │  │  - Detect anomalies                 │    │
 │  │  - Trigger recovery flow            │    │
