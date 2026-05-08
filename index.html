@@ -196,7 +196,7 @@
       z-index: 2;
       width: min(420px, 100%);
       margin-left: auto;
-      padding: 22px;
+      padding: 28px 30px;
       border: 1px solid rgba(154, 217, 166, 0.22);
       background: rgba(5, 13, 7, 0.54);
       box-shadow:
@@ -204,33 +204,11 @@
         0 24px 48px rgba(0, 0, 0, 0.24);
     }
 
-    .wallet-label {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 18px;
-      margin-bottom: 18px;
-      color: rgba(217, 234, 220, 0.78);
-      font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-    }
-
-    .wallet-pill {
-      border: 1px solid rgba(154, 217, 166, 0.28);
-      padding: 5px 9px;
-      color: #c5f2cc;
-      background: rgba(154, 217, 166, 0.07);
-      letter-spacing: 0.08em;
-    }
-
     .wallet-address {
-      margin: 0 0 20px;
+      margin: 0;
       color: #f4fff4;
       font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
-      font-size: clamp(18px, 2vw, 24px);
+      font-size: clamp(22px, 2.3vw, 30px);
       font-weight: 800;
       line-height: 1.24;
       overflow-wrap: anywhere;
@@ -324,10 +302,6 @@
     </section>
     <section class="visual-panel" aria-label="Generated wallet state">
       <div class="wallet-shell">
-        <div class="wallet-label">
-          <span>Generated Wallet</span>
-          <span class="wallet-pill">Local</span>
-        </div>
         <p class="wallet-address">0x7A3e...91C2</p>
       </div>
     </section>
