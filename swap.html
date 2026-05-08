@@ -614,19 +614,19 @@
     draw();
   </script>
   <script>
-    // Swap logic (mock pricing)
+    // Swap logic with 0x proxy fallback.
     const TOKENS = {
-      ETH:  { symbol: "ETH",  name: "Ethereum",   usd: 3200,  balance: "2.4815" },
-      USDC: { symbol: "USDC", name: "USD Coin",   usd: 1,     balance: "1 240.00" },
-      USDT: { symbol: "USDT", name: "Tether",     usd: 1,     balance: "980.50" },
-      DAI:  { symbol: "DAI",  name: "Dai",        usd: 1,     balance: "412.10" },
-      WBTC: { symbol: "WBTC", name: "Wrapped BTC",usd: 64000, balance: "0.0182" },
-      ARB:  { symbol: "ARB",  name: "Arbitrum",   usd: 0.92,  balance: "320.00" },
-      OP:   { symbol: "OP",   name: "Optimism",   usd: 1.85,  balance: "210.00" },
-      MATIC:{ symbol: "MATIC",name: "Polygon",    usd: 0.78,  balance: "1 020.00" }
+      ETH:  { symbol: "ETH",  name: "Wrapped Ether", usd: 3200,  balance: "2.4815", address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", decimals: 18 },
+      USDC: { symbol: "USDC", name: "USD Coin",      usd: 1,     balance: "1 240.00", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
+      USDT: { symbol: "USDT", name: "Tether",        usd: 1,     balance: "980.50", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
+      DAI:  { symbol: "DAI",  name: "Dai",           usd: 1,     balance: "412.10", address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", decimals: 18 },
+      WBTC: { symbol: "WBTC", name: "Wrapped BTC",   usd: 64000, balance: "0.0182", address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", decimals: 8 },
+      ARB:  { symbol: "ARB",  name: "Arbitrum",      usd: 0.92,  balance: "320.00", address: "0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1", decimals: 18 },
+      OP:   { symbol: "OP",   name: "Optimism",      usd: 1.85,  balance: "210.00", address: "0x4200000000000000000000000000000000000042", decimals: 18 },
+      MATIC:{ symbol: "MATIC",name: "Polygon",       usd: 0.78,  balance: "1 020.00", address: "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0", decimals: 18 }
     };
 
-    const state = { from: "ETH", to: "USDC", amount: "" };
+    const state = { from: "ETH", to: "USDC", amount: "", lastPrice: null };
 
     const fromInput = document.querySelector('[data-amount="from"]');
     const toInput   = document.querySelector('[data-amount="to"]');
@@ -643,12 +643,30 @@
     const modalClose= document.querySelector('[data-modal-close]');
 
     let pickTarget = null;
+    let priceTimer = null;
 
     function fmt(n) {
       if (!isFinite(n)) return "0.0";
       if (n === 0) return "0.0";
       if (n >= 1) return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
       return n.toLocaleString("en-US", { maximumFractionDigits: 6 });
+    }
+
+    function amountToUnits(value, decimals) {
+      const clean = cleanAmount(value);
+      if (!clean) return "0";
+      const [whole, fraction = ""] = clean.split(".");
+      const padded = (fraction + "0".repeat(decimals)).slice(0, decimals);
+      return (BigInt(whole || "0") * (10n ** BigInt(decimals)) + BigInt(padded || "0")).toString();
+    }
+
+    function unitsToAmount(value, decimals) {
+      const units = BigInt(value || "0");
+      const base = 10n ** BigInt(decimals);
+      const whole = units / base;
+      const fraction = units % base;
+      const fractionText = fraction.toString().padStart(decimals, "0").replace(/0+$/, "");
+      return fractionText ? `${whole}.${fractionText}` : whole.toString();
     }
 
     function renderTokens() {
@@ -675,6 +693,46 @@
       toInput.value = fmt(out);
     }
 
+    async function request0x(endpoint) {
+      const fT = TOKENS[state.from];
+      const tT = TOKENS[state.to];
+      const sellAmount = amountToUnits(fromInput.value, fT.decimals);
+      const params = new URLSearchParams({
+        chainId: "1",
+        sellToken: fT.address,
+        buyToken: tT.address,
+        sellAmount
+      });
+
+      const response = await fetch(`/api/swap/${endpoint}?${params.toString()}`);
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || payload.message || "0x quote failed");
+      }
+      return payload;
+    }
+
+    function scheduleLivePrice() {
+      clearTimeout(priceTimer);
+      const raw = parseFloat((fromInput.value || "").replace(/[^0-9.]/g, ""));
+      if (!isFinite(raw) || raw <= 0) return;
+
+      priceTimer = setTimeout(async () => {
+        try {
+          const price = await request0x("price");
+          state.lastPrice = price;
+          if (price.buyAmount) {
+            const tT = TOKENS[state.to];
+            toInput.value = fmt(Number(unitsToAmount(price.buyAmount, tT.decimals)));
+          }
+          showStatus("0x.price: live route ready");
+        } catch (error) {
+          state.lastPrice = null;
+          showStatus(`0x.price: ${error.message}; using mock route`);
+        }
+      }, 450);
+    }
+
     function cleanAmount(value) {
       const [head, ...tail] = value.replace(/[^0-9.]/g, "").split(".");
       return tail.length ? `${head}.${tail.join("")}` : head;
@@ -687,12 +745,14 @@
       }
       hideStatus();
       recalc();
+      scheduleLivePrice();
     });
 
     switchBtn.addEventListener('click', () => {
       [state.from, state.to] = [state.to, state.from];
       hideStatus();
       renderTokens();
+      scheduleLivePrice();
     });
 
     function openPicker(target) {
@@ -713,6 +773,7 @@
           closePicker();
           hideStatus();
           renderTokens();
+          scheduleLivePrice();
         });
         modalList.appendChild(btn);
       });
@@ -740,13 +801,20 @@
       statusEl.classList.add('is-visible');
     }
 
-    swapBtn.addEventListener('click', () => {
+    swapBtn.addEventListener('click', async () => {
       const raw = parseFloat((fromInput.value || "").replace(/[^0-9.]/g, ""));
       if (!isFinite(raw) || raw <= 0) {
         showStatus('swap.input: enter an amount to continue');
         return;
       }
-      showStatus(`swap.queued: ${fmt(raw)} ${state.from} → ${toInput.value} ${state.to}`);
+      showStatus("0x.quote: requesting transaction data");
+      try {
+        const quote = await request0x("quote");
+        state.lastPrice = quote;
+        showStatus(`0x.quote: ready ${fmt(raw)} ${state.from} → ${toInput.value} ${state.to}`);
+      } catch (error) {
+        showStatus(`0x.quote: ${error.message}`);
+      }
     });
 
     renderTokens();
