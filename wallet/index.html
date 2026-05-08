@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Armory Wallet</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">USB Armory MK II</p>
+          <h1>Wallet (Sepolia)</h1>
+          <!-- <p class="sub">Address is derived on the host. Private key is hidden.</p> -->
+        </div>
+      </header>
+
+      <section class="grid">
+        <div class="card">
+          <div class="card-header">
+            <h2>Status</h2>
+            <p class="muted">Connection + initialization.</p>
+          </div>
+
+          <div class="kv">
+            <div>
+              <div class="k">Device</div>
+              <div class="v mono" id="status">checking</div>
+            </div>
+            <div>
+              <div class="k">Ethereum address</div>
+              <div class="v mono" id="address">-</div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="initBtn">Initialize key</button>
+            <button id="rotateBtn" class="ghost">Rotate key</button>
+          </div>
+
+          <div class="alert" id="alert" role="status"></div>
+          <p class="note">Key lives in device memory until reboot.</p>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
