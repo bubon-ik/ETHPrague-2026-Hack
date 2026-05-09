@@ -42,6 +42,14 @@ function formatWalletAddress(address) {
   return address;
 }
 
+function formatTokenBalance(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0.0";
+  if (n === 0) return "0.0";
+  if (n >= 1) return n.toLocaleString("en-US", { maximumFractionDigits: 6 });
+  return n.toLocaleString("en-US", { maximumFractionDigits: 8 });
+}
+
 function unitsToAmount(value, decimals) {
   const units = BigInt(value || "0");
   const base = 10n ** BigInt(decimals);
@@ -339,7 +347,9 @@ function SwapPage({ navigate }) {
   const [marketStatus, setMarketStatus] = useState("market.price: loading");
   const [marketPrices, setMarketPrices] = useState({});
   const [picker, setPicker] = useState(null);
+  const [ethBalance, setEthBalance] = useState(TOKENS.ETH.balance);
 
+  const balances = useMemo(() => ({ ETH: ethBalance }), [ethBalance]);
   const fromToken = TOKENS[from];
   const toToken = TOKENS[to];
   const fromUsd = marketPrices[fromToken.cgId]?.usd || fromToken.usd;
@@ -373,6 +383,27 @@ function SwapPage({ navigate }) {
 
     loadMarketPrices();
     const interval = window.setInterval(loadMarketPrices, 60000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSepoliaBalance() {
+      try {
+        const balance = await requestWalletBalance();
+        if (cancelled) return;
+        setEthBalance(formatTokenBalance(balance.balanceEth));
+      } catch {
+        if (!cancelled) setEthBalance("0.0");
+      }
+    }
+
+    loadSepoliaBalance();
+    const interval = window.setInterval(loadSepoliaBalance, 5000);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
@@ -429,9 +460,9 @@ function SwapPage({ navigate }) {
             <h1 className="swap-title">Swap</h1>
           </div>
           <div className="swap-card">
-            <SwapLeg label="From" token={fromToken} amount={amount} editable onAmountChange={(value) => { setAmount(cleanAmount(value)); setStatus(""); }} onPick={() => setPicker("from")} />
+            <SwapLeg label="From" token={fromToken} amount={amount} balance={balances[from]} editable onAmountChange={(value) => { setAmount(cleanAmount(value)); setStatus(""); }} onPick={() => setPicker("from")} />
             <button className="swap-arrow" type="button" aria-label="Switch tokens" onClick={switchTokens}>↓</button>
-            <SwapLeg label="To" token={toToken} amount={output} onPick={() => setPicker("to")} />
+            <SwapLeg label="To" token={toToken} amount={output} balance={balances[to]} onPick={() => setPicker("to")} />
             <div className="swap-meta">
               <div className="swap-meta-row"><span>Rate</span><strong>1 {from} ≈ {fmt(fromUsd / toUsd)} {to}</strong></div>
               <div className="swap-meta-row"><span>Slippage</span><strong>0.5%</strong></div>
@@ -455,12 +486,14 @@ function formatChange(value) {
   return `${sign}${value.toFixed(2)}%`;
 }
 
-function SwapLeg({ label, token, amount, editable = false, onAmountChange, onPick }) {
+function SwapLeg({ label, token, amount, balance, editable = false, onAmountChange, onPick }) {
+  const visibleBalance = balance ?? token.balance;
+
   return (
     <div className="leg">
       <div className="leg-row">
         <span className="leg-label">{label}</span>
-        <span className="leg-balance">Balance: <strong>{token.balance}</strong></span>
+        <span className="leg-balance">Balance: <strong>{visibleBalance}</strong></span>
       </div>
       <div className="leg-input-row">
         <input className="amount-input" inputMode="decimal" placeholder="0.0" value={amount} readOnly={!editable} onChange={(event) => onAmountChange?.(event.target.value)} />
@@ -515,6 +548,13 @@ async function requestMarketPrices() {
   const response = await fetch(`/api/market/prices?${params.toString()}`);
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || payload.message || "CoinGecko price failed");
+  return payload;
+}
+
+async function requestWalletBalance() {
+  const response = await fetch("/api/wallet/balance");
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || payload.message || "Sepolia balance failed");
   return payload;
 }
 

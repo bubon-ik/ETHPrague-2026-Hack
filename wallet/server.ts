@@ -19,6 +19,7 @@ const PORT = Number(Bun.env.WALLET_PORT ?? 3030);
 const DEBUG = Bun.env.WALLET_DEBUG !== "0";
 const ZEROX_BASE_URL = "https://api.0x.org";
 const COINGECKO_BASE_URL = "https://api.coingecko.com/api/v3";
+const DEFAULT_SEPOLIA_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com";
 
 const assets = {
   "/": {
@@ -140,6 +141,19 @@ function isUsableAddress(value) {
   return /^0x[0-9a-fA-F]{40}$/.test(value || "") && !/^0x0{40}$/i.test(value);
 }
 
+function formatEtherFromWei(hexWei) {
+  const wei = BigInt(hexWei || "0x0");
+  const base = 10n ** 18n;
+  const whole = wei / base;
+  const fraction = wei % base;
+
+  if (wei === 0n) return "0.0";
+  if (fraction === 0n) return whole.toString();
+
+  const fractionText = fraction.toString().padStart(18, "0").replace(/0+$/, "");
+  return `${whole}.${fractionText}`;
+}
+
 async function proxy0x(url, endpoint) {
   if (!process.env.ZEROX_API_KEY) {
     return jsonError("Missing ZEROX_API_KEY in secrets.env.", 500);
@@ -219,6 +233,44 @@ async function readWalletAddress() {
   return { connected: false, source: "none", address: null };
 }
 
+async function readWalletBalance() {
+  const wallet = await readWalletAddress();
+  if (!wallet.connected || !isUsableAddress(wallet.address)) {
+    return {
+      ...wallet,
+      network: "sepolia",
+      chainId: 11155111,
+      balanceWei: "0x0",
+      balanceEth: "0.0",
+    };
+  }
+
+  const rpcUrl = process.env.SEPOLIA_RPC_URL || DEFAULT_SEPOLIA_RPC_URL;
+  const rpcResponse = await fetch(rpcUrl, {
+    method: "POST",
+    signal: AbortSignal.timeout(5000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "eth_getBalance",
+      params: [wallet.address, "latest"],
+    }),
+  });
+  const payload = await rpcResponse.json().catch(() => ({}));
+  if (!rpcResponse.ok || payload.error || typeof payload.result !== "string") {
+    throw new Error(payload.error?.message || rpcResponse.statusText || "Invalid Sepolia RPC response.");
+  }
+
+  return {
+    ...wallet,
+    network: "sepolia",
+    chainId: 11155111,
+    balanceWei: payload.result,
+    balanceEth: formatEtherFromWei(payload.result),
+  };
+}
+
 async function callApplet(method, input, options = {}) {
   const redactOutput = options.redactOutput === true;
   log(`bridge -> ${method} (len=${input.length}) ${truncate(input)}`);
@@ -292,6 +344,11 @@ const server = Bun.serve({
       if (url.pathname === "/api/wallet/address" && req.method === "GET") {
         const wallet = await readWalletAddress();
         return jsonOk(wallet);
+      }
+
+      if (url.pathname === "/api/wallet/balance" && req.method === "GET") {
+        const balance = await readWalletBalance();
+        return jsonOk(balance);
       }
 
       if (url.pathname === "/api/status" && req.method === "GET") {

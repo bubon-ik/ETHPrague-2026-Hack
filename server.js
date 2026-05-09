@@ -2,12 +2,14 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { URL } = require("url");
+const { formatEtherFromWei } = require("./server-utils");
 
 const ROOT = __dirname;
 const DIST = path.join(ROOT, "dist");
 const PORT = Number(process.env.PORT || 4173);
 const ZEROX_BASE_URL = "https://api.0x.org";
 const COINGECKO_BASE_URL = "https://api.coingecko.com/api/v3";
+const DEFAULT_SEPOLIA_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com";
 
 loadEnv(path.join(ROOT, ".env"));
 
@@ -170,7 +172,7 @@ async function proxyCoinGeckoPrices(reqUrl, res) {
   }
 }
 
-async function readWalletAddress(res) {
+async function getWalletSnapshot() {
   const walletApiUrl = process.env.WALLET_API_URL || "http://127.0.0.1:3030/api/state";
   try {
     const walletResponse = await fetch(walletApiUrl, {
@@ -179,31 +181,78 @@ async function readWalletAddress(res) {
     });
     const payload = await walletResponse.json().catch(() => ({}));
     if (walletResponse.ok && isUsableAddress(payload.address)) {
-      sendJson(res, 200, {
+      return {
         connected: true,
         source: "space-computer",
         address: payload.address
-      });
-      return;
+      };
     }
   } catch {
     // Fall back to .env below while the Space Computer wallet service is offline.
   }
 
   if (isUsableAddress(process.env.SIMBA_TAKER_ADDRESS)) {
-    sendJson(res, 200, {
+    return {
       connected: true,
       source: "env",
       address: process.env.SIMBA_TAKER_ADDRESS
+    };
+  }
+
+  return {
+    connected: false,
+    source: "none",
+    address: null
+  };
+}
+
+async function readWalletAddress(res) {
+  sendJson(res, 200, await getWalletSnapshot());
+}
+
+async function readWalletBalance(res) {
+  const wallet = await getWalletSnapshot();
+  if (!wallet.connected || !isUsableAddress(wallet.address)) {
+    sendJson(res, 200, {
+      ...wallet,
+      network: "sepolia",
+      chainId: 11155111,
+      balanceWei: "0x0",
+      balanceEth: "0.0"
     });
     return;
   }
 
-  sendJson(res, 200, {
-    connected: false,
-    source: "none",
-    address: null
-  });
+  const rpcUrl = process.env.SEPOLIA_RPC_URL || DEFAULT_SEPOLIA_RPC_URL;
+  try {
+    const rpcResponse = await fetch(rpcUrl, {
+      method: "POST",
+      signal: AbortSignal.timeout(5000),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_getBalance",
+        params: [wallet.address, "latest"]
+      })
+    });
+    const payload = await rpcResponse.json().catch(() => ({}));
+    if (!rpcResponse.ok || payload.error || typeof payload.result !== "string") {
+      const detail = payload.error?.message || rpcResponse.statusText || "Invalid Sepolia RPC response.";
+      sendJson(res, 502, { error: "Sepolia balance request failed.", detail });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ...wallet,
+      network: "sepolia",
+      chainId: 11155111,
+      balanceWei: payload.result,
+      balanceEth: formatEtherFromWei(payload.result)
+    });
+  } catch (error) {
+    sendJson(res, 502, { error: "Sepolia balance request failed.", detail: error.message });
+  }
 }
 
 const server = http.createServer((req, res) => {
@@ -231,6 +280,11 @@ const server = http.createServer((req, res) => {
 
   if (reqUrl.pathname === "/api/wallet/address") {
     readWalletAddress(res);
+    return;
+  }
+
+  if (reqUrl.pathname === "/api/wallet/balance") {
+    readWalletBalance(res);
     return;
   }
 

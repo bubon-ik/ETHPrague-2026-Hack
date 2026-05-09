@@ -56,6 +56,7 @@ const swapState = {
   status: "",
   marketStatus: "market.price: loading",
   marketPrices: {},
+  balances: { ETH: TOKENS.ETH.balance },
   picker: null,
 };
 
@@ -93,6 +94,14 @@ function amountToUnits(value, decimals) {
 function formatWalletAddress(address) {
   if (!address) return WALLET_PENDING;
   return address;
+}
+
+function formatTokenBalance(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0.0";
+  if (n === 0) return "0.0";
+  if (n >= 1) return n.toLocaleString("en-US", { maximumFractionDigits: 6 });
+  return n.toLocaleString("en-US", { maximumFractionDigits: 8 });
 }
 
 function showWalletAlert(message) {
@@ -245,6 +254,15 @@ async function loadWalletAddress() {
   } catch {
     setWalletAddress(null, false);
   }
+
+  try {
+    const balance = await requestWalletBalance();
+    swapState.balances.ETH = formatTokenBalance(balance.balanceEth);
+    renderSwap();
+  } catch {
+    swapState.balances.ETH = "0.0";
+    renderSwap();
+  }
 }
 
 async function runWalletAction(path, label, button) {
@@ -296,8 +314,8 @@ function renderSwap() {
   const toUsd = swapState.marketPrices[toToken.cgId]?.usd ?? toToken.usd;
   const fromChange = swapState.marketPrices[fromToken.cgId]?.usd_24h_change;
 
-  if (swapEls.fromBalance) swapEls.fromBalance.textContent = fromToken.balance;
-  if (swapEls.toBalance) swapEls.toBalance.textContent = toToken.balance;
+  if (swapEls.fromBalance) swapEls.fromBalance.textContent = swapState.balances[fromToken.symbol] ?? fromToken.balance;
+  if (swapEls.toBalance) swapEls.toBalance.textContent = swapState.balances[toToken.symbol] ?? toToken.balance;
   if (swapEls.fromSymbol) swapEls.fromSymbol.textContent = fromToken.symbol;
   if (swapEls.toSymbol) swapEls.toSymbol.textContent = toToken.symbol;
   if (swapEls.fromAmount) swapEls.fromAmount.value = swapState.amount;
@@ -484,6 +502,13 @@ async function requestMarketPrices() {
   const response = await fetch(`/api/market/prices?${params.toString()}`);
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || payload.message || "CoinGecko price failed");
+  return payload;
+}
+
+async function requestWalletBalance() {
+  const response = await fetch("/api/wallet/balance");
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || payload.message || "Sepolia balance failed");
   return payload;
 }
 
