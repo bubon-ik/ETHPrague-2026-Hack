@@ -10,6 +10,8 @@ const MARKET_IDS = Object.values(TOKENS).map((token) => token.cgId).join(",");
 const pages = {
   home: document.getElementById("page-home"),
   send: document.getElementById("page-send"),
+  cli: document.getElementById("page-cli"),
+  settings: document.getElementById("page-settings"),
   agent: document.getElementById("page-agent"),
   swap: document.getElementById("page-swap"),
 };
@@ -21,6 +23,14 @@ const statusWalletAddressEl = document.getElementById("status-wallet-address");
 const initBtn = document.getElementById("initBtn");
 const rotateBtn = document.getElementById("rotateBtn");
 const walletAlertEl = document.getElementById("wallet-alert");
+const sendToInput = document.getElementById("send-to");
+const sendAmountInput = document.getElementById("send-amount");
+const sendSubmitBtn = document.getElementById("send-submit");
+const sendStatusEl = document.getElementById("send-status");
+const cliInput = document.getElementById("cli-input");
+const cliRunBtn = document.getElementById("cli-run");
+const cliOutputEl = document.getElementById("cli-output");
+const cliCommandsEl = document.getElementById("cli-commands");
 
 const swapEls = {
   fromAmount: document.getElementById("from-amount"),
@@ -64,6 +74,7 @@ const agentSuggestions = [
 let walletTimer = 0;
 let swapPriceTimer = 0;
 let marketTimer = 0;
+let currentWalletAddress = null;
 
 function fmt(n) {
   if (!Number.isFinite(n)) return "0.0";
@@ -88,6 +99,21 @@ function amountToUnits(value, decimals) {
 function formatWalletAddress(address) {
   if (!address) return WALLET_PENDING;
   return address;
+}
+
+function normalizeAddress(value) {
+  if (!value) return null;
+  let text = String(value).trim();
+  if (text.startsWith("0x")) {
+    text = text.slice(2);
+  }
+  if (!/^[0-9a-fA-F]{40}$/.test(text)) return null;
+  return `0x${text.toLowerCase()}`;
+}
+
+function extractAddresses(text) {
+  const matches = String(text || "").match(/0x[a-fA-F0-9]{40}/g) || [];
+  return matches.map(normalizeAddress).filter(Boolean);
 }
 
 function formatTokenBalance(value) {
@@ -226,6 +252,7 @@ function initMatrix() {
 }
 
 function setWalletAddress(address, connected) {
+  currentWalletAddress = connected ? normalizeAddress(address) : null;
   const label = formatWalletAddress(address);
   if (walletAddressEl) {
     walletAddressEl.textContent = label;
@@ -286,6 +313,128 @@ async function runWalletAction(path, label, button) {
 function startWalletPolling() {
   loadWalletAddress();
   walletTimer = window.setInterval(loadWalletAddress, 5000);
+}
+
+function setOutput(el, message) {
+  if (!el) return;
+  el.textContent = message || "";
+  el.classList.toggle("is-visible", Boolean(message));
+}
+
+function setSendStatus(message) {
+  setOutput(sendStatusEl, message);
+}
+
+function setCliOutput(message) {
+  setOutput(cliOutputEl, message);
+}
+
+async function runCli(command) {
+  const response = await fetch("/api/cli", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command }),
+  });
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {
+    payload = {};
+  }
+  if (!response.ok) throw new Error(payload.error || response.statusText);
+  return payload.output || "cli: ok";
+}
+
+function buildTransferCommand() {
+  if (!sendToInput || !sendAmountInput) return "";
+  const to = sendToInput.value.trim();
+  const amount = sendAmountInput.value.trim();
+
+  if (!to) throw new Error("send.to: enter a recipient address");
+  if (!/^0x[0-9a-fA-F]{40}$/.test(to)) {
+    throw new Error("send.to: invalid address");
+  }
+  if (!amount) throw new Error("send.amount: enter an amount");
+  if (!/^\d+(\.\d+)?$/.test(amount)) {
+    throw new Error("send.amount: invalid amount");
+  }
+
+  return `transfer_to ${to} ${amount} ETH`;
+}
+
+function initSend() {
+  if (!sendToInput || !sendAmountInput || !sendSubmitBtn || !sendStatusEl) return;
+  const clear = () => setSendStatus("");
+  sendToInput.addEventListener("input", clear);
+  sendAmountInput.addEventListener("input", clear);
+  sendAmountInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      sendSubmitBtn.click();
+    }
+  });
+
+  sendSubmitBtn.addEventListener("click", async () => {
+    sendSubmitBtn.disabled = true;
+    setSendStatus("send.run: executing...");
+    try {
+      const command = buildTransferCommand();
+      const output = await runCli(command);
+      setSendStatus(output);
+      await loadWalletAddress();
+    } catch (error) {
+      setSendStatus(`send.error: ${error.message || "request failed"}`);
+    } finally {
+      sendSubmitBtn.disabled = false;
+    }
+  });
+}
+
+async function loadCliCommands() {
+  if (!cliCommandsEl) return;
+  try {
+    const response = await fetch("/api/cli/commands");
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch {
+      payload = {};
+    }
+    if (!response.ok) throw new Error(payload.error || response.statusText);
+    cliCommandsEl.textContent = payload.commands || "no commands";
+  } catch (error) {
+    cliCommandsEl.textContent = `commands: ${error.message || "unavailable"}`;
+  }
+}
+
+function initCli() {
+  if (!cliInput || !cliRunBtn || !cliOutputEl) return;
+  cliInput.addEventListener("input", () => setCliOutput(""));
+  cliInput.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      cliRunBtn.click();
+    }
+  });
+  cliRunBtn.addEventListener("click", async () => {
+    const command = cliInput.value.trim();
+    if (!command) {
+      setCliOutput("cli.input: enter a command");
+      return;
+    }
+    cliRunBtn.disabled = true;
+    setCliOutput("cli.run: executing...");
+    try {
+      const output = await runCli(command);
+      setCliOutput(output);
+      await loadWalletAddress();
+    } catch (error) {
+      setCliOutput(`cli.error: ${error.message || "request failed"}`);
+    } finally {
+      cliRunBtn.disabled = false;
+    }
+  });
+  loadCliCommands();
 }
 
 function updateMockOutput() {
@@ -446,36 +595,56 @@ function initSwap() {
 }
 
 function initAgent() {
-  const promptEl = document.getElementById("agent-prompt");
+  const threadEl = document.getElementById("agent-thread");
+  const inputEl = document.getElementById("agent-input");
   const sendEl = document.getElementById("agent-send");
-  const responseEl = document.getElementById("agent-response");
-  const suggestionsEl = document.getElementById("agent-suggestions");
-  if (!promptEl || !sendEl || !responseEl || !suggestionsEl) return;
+  if (!threadEl || !inputEl || !sendEl) return;
 
-  const setResponse = (text) => {
-    responseEl.textContent = text;
-    responseEl.classList.toggle("is-visible", Boolean(text));
+  const addMessage = (role, text) => {
+    const item = document.createElement("div");
+    item.className = `chat-message ${role}`;
+    const bubble = document.createElement("div");
+    bubble.className = "chat-bubble";
+    bubble.textContent = text;
+    item.appendChild(bubble);
+    threadEl.appendChild(item);
+    threadEl.scrollTop = threadEl.scrollHeight;
   };
 
-  promptEl.addEventListener("input", () => setResponse(""));
-  sendEl.addEventListener("click", () => {
-    const text = promptEl.value.trim();
-    setResponse(text ? "agent.request: queued for API connection" : "agent.input: waiting for a request");
+  const handleSend = async () => {
+    const text = inputEl.value.trim();
+    if (!text) return;
+    addMessage("user", text);
+    inputEl.value = "";
+
+    const commandName = text.split(/\s+/)[0];
+    if (commandName === "transfer_to" || commandName === "commands") {
+      addMessage("assistant", "agent: running command...");
+      try {
+        const output = await runCli(text);
+        addMessage("assistant", output || "cli: ok");
+        await loadWalletAddress();
+      } catch (error) {
+        addMessage("assistant", `cli.error: ${error.message || "request failed"}`);
+      }
+      return;
+    }
+
+    addMessage("assistant", "Simba: got it. Use transfer_to <address> <amount> ETH to execute.");
+  };
+
+  sendEl.addEventListener("click", handleSend);
+  inputEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      handleSend();
+    }
   });
 
-  suggestionsEl.textContent = "";
-  agentSuggestions.forEach((item) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "chip";
-    button.textContent = item;
-    button.addEventListener("click", () => {
-      promptEl.value = item;
-      setResponse("");
-      promptEl.focus();
-    });
-    suggestionsEl.appendChild(button);
-  });
+  if (!threadEl.dataset.ready) {
+    addMessage("assistant", "Simba online. Ask me anything or run transfer_to to send ETH.");
+    threadEl.dataset.ready = "true";
+  }
 }
 
 async function requestSwap(endpoint, fromToken, toToken, amount) {
@@ -510,6 +679,8 @@ function initApp() {
   initMatrix();
   bindRoutes();
   bindWalletActions();
+  initSend();
+  initCli();
   initAgent();
   initSwap();
   startWalletPolling();

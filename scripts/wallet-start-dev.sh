@@ -2,6 +2,17 @@
 
 set -euo pipefail
 
+# Ensure Bun is on PATH even if the parent shell hasn't sourced ~/.zshrc yet.
+if ! command -v bun >/dev/null 2>&1; then
+  export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+  export PATH="$BUN_INSTALL/bin:$PATH"
+fi
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "bun not found. Install it: curl -fsSL https://bun.sh/install | bash" >&2
+  exit 1
+fi
+
 if [[ ! -d node_modules ]]; then
   echo "==> install deps"
   bun install
