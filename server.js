@@ -4,9 +4,10 @@ const path = require("path");
 const { URL } = require("url");
 
 const ROOT = __dirname;
+const DIST = path.join(ROOT, "dist");
 const PORT = Number(process.env.PORT || 4173);
 const ZEROX_BASE_URL = "https://api.0x.org";
-const PUBLIC_FILES = new Set(["/", "/index.html", "/swap.html", "/send.html", "/agent.html"]);
+const COINGECKO_BASE_URL = "https://api.coingecko.com/api/v3";
 
 loadEnv(path.join(ROOT, ".env"));
 
@@ -37,14 +38,35 @@ function sendText(res, status, text) {
   res.end(text);
 }
 
+function contentType(filePath) {
+  const ext = path.extname(filePath);
+  if (ext === ".html") return "text/html; charset=utf-8";
+  if (ext === ".js") return "text/javascript; charset=utf-8";
+  if (ext === ".css") return "text/css; charset=utf-8";
+  if (ext === ".json") return "application/json; charset=utf-8";
+  if (ext === ".svg") return "image/svg+xml";
+  return "application/octet-stream";
+}
+
 function serveStatic(reqUrl, res) {
-  const pathname = reqUrl.pathname === "/" ? "/index.html" : reqUrl.pathname;
-  if (!PUBLIC_FILES.has(pathname)) {
-    sendText(res, 404, "Not found");
+  if (!fs.existsSync(DIST)) {
+    sendText(res, 503, "Build missing. Run npm run build before npm start, or use npm run dev for Vite.");
     return;
   }
 
-  const filePath = path.join(ROOT, pathname);
+  const requestedPath = reqUrl.pathname === "/" ? "/index.html" : reqUrl.pathname;
+  const safePath = path.normalize(requestedPath).replace(/^(\.\.[/\\])+/, "");
+  let filePath = path.join(DIST, safePath);
+
+  if (!filePath.startsWith(DIST)) {
+    sendText(res, 403, "Forbidden");
+    return;
+  }
+
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    filePath = path.join(DIST, "index.html");
+  }
+
   fs.readFile(filePath, (error, data) => {
     if (error) {
       sendText(res, 404, "Not found");
@@ -52,7 +74,7 @@ function serveStatic(reqUrl, res) {
     }
 
     res.writeHead(200, {
-      "Content-Type": "text/html; charset=utf-8",
+      "Content-Type": contentType(filePath),
       "Cache-Control": "no-store"
     });
     res.end(data);
@@ -111,6 +133,39 @@ async function proxy0x(reqUrl, res, endpoint) {
   }
 }
 
+async function proxyCoinGeckoPrices(reqUrl, res) {
+  if (!process.env.COINGECKO_API_KEY) {
+    sendJson(res, 500, { error: "Missing COINGECKO_API_KEY in .env." });
+    return;
+  }
+
+  const ids = reqUrl.searchParams.get("ids");
+  if (!ids) {
+    sendJson(res, 400, { error: "Missing ids." });
+    return;
+  }
+
+  const coinGeckoUrl = new URL(`${COINGECKO_BASE_URL}/simple/price`);
+  coinGeckoUrl.searchParams.set("ids", ids);
+  coinGeckoUrl.searchParams.set("vs_currencies", reqUrl.searchParams.get("vs_currencies") || "usd");
+  coinGeckoUrl.searchParams.set("include_24hr_change", "true");
+  coinGeckoUrl.searchParams.set("include_last_updated_at", "true");
+
+  try {
+    const coinGeckoResponse = await fetch(coinGeckoUrl, {
+      headers: {
+        "x-cg-demo-api-key": process.env.COINGECKO_API_KEY,
+        "Content-Type": "application/json"
+      }
+    });
+
+    const payload = await coinGeckoResponse.json().catch(() => ({}));
+    sendJson(res, coinGeckoResponse.status, payload);
+  } catch (error) {
+    sendJson(res, 502, { error: "CoinGecko request failed.", detail: error.message });
+  }
+}
+
 const server = http.createServer((req, res) => {
   const reqUrl = new URL(req.url, `http://${req.headers.host}`);
 
@@ -126,6 +181,11 @@ const server = http.createServer((req, res) => {
 
   if (reqUrl.pathname === "/api/swap/quote") {
     proxy0x(reqUrl, res, "quote");
+    return;
+  }
+
+  if (reqUrl.pathname === "/api/market/prices") {
+    proxyCoinGeckoPrices(reqUrl, res);
     return;
   }
 
