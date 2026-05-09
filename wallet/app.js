@@ -17,6 +17,7 @@ const pages = {
   home: document.getElementById("page-home"),
   send: document.getElementById("page-send"),
   cli: document.getElementById("page-cli"),
+  settings: document.getElementById("page-settings"),
   agent: document.getElementById("page-agent"),
   swap: document.getElementById("page-swap"),
 };
@@ -36,6 +37,11 @@ const cliInput = document.getElementById("cli-input");
 const cliRunBtn = document.getElementById("cli-run");
 const cliOutputEl = document.getElementById("cli-output");
 const cliCommandsEl = document.getElementById("cli-commands");
+const settingsCountryInput = document.getElementById("settings-country");
+const settingsBlacklistInput = document.getElementById("settings-blacklist");
+const settingsStatusEl = document.getElementById("settings-status");
+const settingsGeoEl = document.getElementById("settings-geo");
+const settingsRefreshBtn = document.getElementById("settings-refresh");
 
 const swapEls = {
   fromAmount: document.getElementById("from-amount"),
@@ -68,12 +74,18 @@ const swapState = {
   picker: null,
 };
 
-const agentSuggestions = [
-  "Analyze wallet security",
-  "Check token contract",
-  "Generate a safe swap route",
-  "Scan for phishing",
-];
+const SETTINGS_STORAGE_KEY = "simba.wallet.settings";
+const GEO_CACHE_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_SETTINGS = {
+  allowedCountry: "CZ",
+  blacklist: [],
+};
+
+let settings = loadSettings();
+let blacklistSet = new Set(settings.blacklist);
+let geoInfo = null;
+let geoFetchedAt = 0;
+let currentWalletAddress = null;
 
 let walletTimer = 0;
 let swapPriceTimer = 0;
@@ -102,6 +114,131 @@ function amountToUnits(value, decimals) {
 function formatWalletAddress(address) {
   if (!address) return WALLET_PENDING;
   return address;
+}
+
+function normalizeCountry(value) {
+  const text = String(value || "").trim().toUpperCase();
+  return text || DEFAULT_SETTINGS.allowedCountry;
+}
+
+function normalizeAddress(value) {
+  if (!value) return null;
+  let text = String(value).trim();
+  if (text.startsWith("0x")) {
+    text = text.slice(2);
+  }
+  if (!/^[0-9a-fA-F]{40}$/.test(text)) return null;
+  return `0x${text.toLowerCase()}`;
+}
+
+function parseBlacklist(text) {
+  const matches = String(text || "").match(/0x[a-fA-F0-9]{40}/g) || [];
+  const set = new Set();
+  matches.forEach((value) => {
+    const normalized = normalizeAddress(value);
+    if (normalized) set.add(normalized);
+  });
+  return Array.from(set);
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_SETTINGS };
+    const parsed = JSON.parse(raw);
+    const allowedCountry = normalizeCountry(parsed.allowedCountry);
+    const blacklist = Array.isArray(parsed.blacklist)
+      ? parsed.blacklist.map(normalizeAddress).filter(Boolean)
+      : [];
+    return { allowedCountry, blacklist };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function saveSettings(nextSettings, message) {
+  settings = {
+    allowedCountry: normalizeCountry(nextSettings.allowedCountry),
+    blacklist: Array.isArray(nextSettings.blacklist) ? nextSettings.blacklist : [],
+  };
+  blacklistSet = new Set(settings.blacklist);
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // Ignore localStorage failures.
+  }
+  if (message) setSettingsStatus(message);
+}
+
+function setSettingsStatus(message) {
+  if (!settingsStatusEl) return;
+  settingsStatusEl.textContent = message || "";
+}
+
+function formatGeoInfo(info) {
+  if (!info) return "unavailable";
+  const parts = [];
+  if (info.country) parts.push(info.country);
+  if (info.city) parts.push(info.city);
+  if (info.region) parts.push(info.region);
+  if (info.ip) parts.push(info.ip);
+  return parts.length ? parts.join(" \u00b7 ") : "unavailable";
+}
+
+async function fetchGeoInfo(force = false) {
+  const now = Date.now();
+  if (!force && geoInfo && now - geoFetchedAt < GEO_CACHE_TTL_MS) {
+    return geoInfo;
+  }
+  const response = await fetch("https://ipinfo.io/json");
+  if (!response.ok) throw new Error(`geo ${response.status}`);
+  const payload = await response.json();
+  geoInfo = payload;
+  geoFetchedAt = now;
+  return geoInfo;
+}
+
+async function refreshGeoInfo(force = false) {
+  if (settingsGeoEl) settingsGeoEl.textContent = "checking...";
+  try {
+    const info = await fetchGeoInfo(force);
+    if (settingsGeoEl) settingsGeoEl.textContent = formatGeoInfo(info);
+  } catch (error) {
+    if (settingsGeoEl) settingsGeoEl.textContent = "unavailable";
+    setSettingsStatus(`geo.error: ${error.message || "unavailable"}`);
+  }
+}
+
+async function ensureCountryAllowed() {
+  let info = null;
+  try {
+    info = await fetchGeoInfo();
+  } catch {
+    throw new Error("wrong country");
+  }
+  const allowed = normalizeCountry(settings.allowedCountry);
+  const country = String(info?.country || "").trim().toUpperCase();
+  if (!country || country !== allowed) {
+    throw new Error("wrong country");
+  }
+}
+
+function ensureNotBlacklisted(addresses) {
+  const blocked = addresses.find((addr) => addr && blacklistSet.has(addr));
+  if (blocked) {
+    throw new Error("blacklisted wallet");
+  }
+}
+
+async function enforceGuards(addresses) {
+  const normalized = (addresses || []).map(normalizeAddress).filter(Boolean);
+  await ensureCountryAllowed();
+  ensureNotBlacklisted(normalized);
+}
+
+function extractAddresses(text) {
+  const matches = String(text || "").match(/0x[a-fA-F0-9]{40}/g) || [];
+  return matches.map(normalizeAddress).filter(Boolean);
 }
 
 function showWalletAlert(message) {
@@ -160,6 +297,36 @@ function bindWalletActions() {
   if (rotateBtn) {
     rotateBtn.addEventListener("click", () => runWalletAction("/api/rotate", "Rotate", rotateBtn));
   }
+}
+
+function initSettings() {
+  if (settingsCountryInput) {
+    settingsCountryInput.value = settings.allowedCountry;
+    settingsCountryInput.addEventListener("input", () => {
+      const allowedCountry = normalizeCountry(settingsCountryInput.value);
+      saveSettings({ ...settings, allowedCountry }, `saved: ${allowedCountry}`);
+    });
+    settingsCountryInput.addEventListener("blur", () => {
+      settingsCountryInput.value = settings.allowedCountry;
+    });
+  }
+
+  if (settingsBlacklistInput) {
+    settingsBlacklistInput.value = settings.blacklist.join("\n");
+    settingsBlacklistInput.addEventListener("input", () => {
+      const blacklist = parseBlacklist(settingsBlacklistInput.value);
+      saveSettings({ ...settings, blacklist }, `saved: ${blacklist.length} blocked`);
+    });
+    settingsBlacklistInput.addEventListener("blur", () => {
+      settingsBlacklistInput.value = settings.blacklist.join("\n");
+    });
+  }
+
+  if (settingsRefreshBtn) {
+    settingsRefreshBtn.addEventListener("click", () => refreshGeoInfo(true));
+  }
+
+  refreshGeoInfo(true);
 }
 
 function initMatrix() {
@@ -232,6 +399,7 @@ function initMatrix() {
 }
 
 function setWalletAddress(address, connected) {
+  currentWalletAddress = connected ? normalizeAddress(address) : null;
   const label = formatWalletAddress(address);
   if (walletAddressEl) {
     walletAddressEl.textContent = label;
@@ -349,10 +517,15 @@ function initSend() {
     setSendStatus("send.run: executing...");
     try {
       const command = buildTransferCommand();
+      await enforceGuards([currentWalletAddress, normalizeAddress(sendToInput.value)]);
       const output = await runCli(command);
       setSendStatus(output);
     } catch (error) {
-      setSendStatus(`send.error: ${error.message || "request failed"}`);
+      const message = error.message || "request failed";
+      const prefix = message === "wrong country" || message === "blacklisted wallet"
+        ? "send.blocked"
+        : "send.error";
+      setSendStatus(`${prefix}: ${message}`);
     } finally {
       sendSubmitBtn.disabled = false;
     }
@@ -394,10 +567,19 @@ function initCli() {
     cliRunBtn.disabled = true;
     setCliOutput("cli.run: executing...");
     try {
+      const commandName = command.split(/\s+/)[0];
+      if (commandName && commandName !== "commands") {
+        const addresses = extractAddresses(command);
+        await enforceGuards([currentWalletAddress, ...addresses]);
+      }
       const output = await runCli(command);
       setCliOutput(output);
     } catch (error) {
-      setCliOutput(`cli.error: ${error.message || "request failed"}`);
+      const message = error.message || "request failed";
+      const prefix = message === "wrong country" || message === "blacklisted wallet"
+        ? "cli.blocked"
+        : "cli.error";
+      setCliOutput(`${prefix}: ${message}`);
     } finally {
       cliRunBtn.disabled = false;
     }
@@ -514,6 +696,14 @@ async function submitSwap() {
     renderSwap();
     return;
   }
+  try {
+    await enforceGuards([currentWalletAddress]);
+  } catch (error) {
+    const message = error.message || "blocked";
+    swapState.status = `swap.blocked: ${message}`;
+    renderSwap();
+    return;
+  }
   swapState.status = "0x.quote: requesting transaction data";
   renderSwap();
   try {
@@ -563,36 +753,63 @@ function initSwap() {
 }
 
 function initAgent() {
-  const promptEl = document.getElementById("agent-prompt");
+  const threadEl = document.getElementById("agent-thread");
+  const inputEl = document.getElementById("agent-input");
   const sendEl = document.getElementById("agent-send");
-  const responseEl = document.getElementById("agent-response");
-  const suggestionsEl = document.getElementById("agent-suggestions");
-  if (!promptEl || !sendEl || !responseEl || !suggestionsEl) return;
+  if (!threadEl || !inputEl || !sendEl) return;
 
-  const setResponse = (text) => {
-    responseEl.textContent = text;
-    responseEl.classList.toggle("is-visible", Boolean(text));
+  const addMessage = (role, text) => {
+    const item = document.createElement("div");
+    item.className = `chat-message ${role}`;
+    const bubble = document.createElement("div");
+    bubble.className = "chat-bubble";
+    bubble.textContent = text;
+    item.appendChild(bubble);
+    threadEl.appendChild(item);
+    threadEl.scrollTop = threadEl.scrollHeight;
   };
 
-  promptEl.addEventListener("input", () => setResponse(""));
-  sendEl.addEventListener("click", () => {
-    const text = promptEl.value.trim();
-    setResponse(text ? "agent.request: queued for API connection" : "agent.input: waiting for a request");
+  const handleSend = async () => {
+    const text = inputEl.value.trim();
+    if (!text) return;
+    addMessage("user", text);
+    inputEl.value = "";
+
+    const commandName = text.split(/\s+/)[0];
+    if (commandName === "transfer_to" || commandName === "commands") {
+      addMessage("assistant", "agent: running command...");
+      try {
+        if (commandName !== "commands") {
+          const addresses = extractAddresses(text);
+          await enforceGuards([currentWalletAddress, ...addresses]);
+        }
+        const output = await runCli(text);
+        addMessage("assistant", output || "cli: ok");
+      } catch (error) {
+        const message = error.message || "request failed";
+        const prefix = message === "wrong country" || message === "blacklisted wallet"
+          ? "blocked"
+          : "error";
+        addMessage("assistant", `cli.${prefix}: ${message}`);
+      }
+      return;
+    }
+
+    addMessage("assistant", "Simba: got it. Use transfer_to <address> <amount> ETH to execute.");
+  };
+
+  sendEl.addEventListener("click", handleSend);
+  inputEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      handleSend();
+    }
   });
 
-  suggestionsEl.textContent = "";
-  agentSuggestions.forEach((item) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "chip";
-    button.textContent = item;
-    button.addEventListener("click", () => {
-      promptEl.value = item;
-      setResponse("");
-      promptEl.focus();
-    });
-    suggestionsEl.appendChild(button);
-  });
+  if (!threadEl.dataset.ready) {
+    addMessage("assistant", "Simba online. Ask me anything or run transfer_to to send ETH.");
+    threadEl.dataset.ready = "true";
+  }
 }
 
 async function request0x(endpoint, fromToken, toToken, amount) {
@@ -620,6 +837,7 @@ function initApp() {
   initMatrix();
   bindRoutes();
   bindWalletActions();
+  initSettings();
   initSend();
   initCli();
   initAgent();

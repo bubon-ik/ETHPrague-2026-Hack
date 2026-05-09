@@ -63,3 +63,56 @@ transfer_to 0x<wallet_address> 0.01 ETH
 this is example of such command. all the commands that we will create, should be written somewhere and used as a prompt for ai agent which will be later integrated to out programm.
 right now you can access private key from mk2. we will use it to sign such transactions on host machine. not im mk2. 
 can you pleas realize functionality of cli and transfer now? 
+
+
+
+
+
+now we need to implement ip address check. if user for example doin that ransaction not from czech republic, block it. for that we will need some service that will tell us our ip and our location
+
+curl -s https://ipinfo.io/json
+
+$ curl -s https://ipinfo.io/json
+{
+  "ip": "89.24.36.164",
+  "hostname": "89-24-36-164.nat.epc.tmcz.cz",
+  "city": "Ostrava",
+  "region": "Moravian-Silesian Region",
+  "country": "CZ",
+  "loc": "49.8347,18.2820",
+  "org": "AS13036 T-Mobile Czech Republic a.s.",
+  "postal": "710 00",
+  "timezone": "Europe/Prague",
+  "readme": "https://ipinfo.io/missingauth"
+}$ 
+
+
+country CZ should be checked. if not, display error - wrong country.
+
+also implement black list, where we cann add wallsts that will be our black list. 
+
+all of that should be conviniently be modifiable in settings of the website.
+
+
+all of it will be implemeted just in frontend, for speed and visibility
+
+
+
+
+
+
+
+
+
+
+
+
+Add in section /agent normal chat stuff. remove 
+
+Analyze wallet security
+Check token contract
+Generate a safe swap route
+Scan for phishing
+
+
+and make it look like a messanger. we type in and ai will response and probably call cli to perform transaction. you goal it to make this section look and perform as a chat, not like it is now. pressing enter should send request.
