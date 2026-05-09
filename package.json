@@ -1,16 +1,27 @@
 {
-  "name": "gotee-starter",
-  "private": true,
-  "type": "module",
+  "name": "aimanager",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
   "scripts": {
-    "upload": "bun run scripts/upload.ts",
-    "test": "bun test",
-    "wallet-cli": "bun run wallet/cli.ts"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Otazka/aimanager.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/Otazka/aimanager/issues"
+  },
+  "homepage": "https://github.com/Otazka/aimanager#readme",
   "dependencies": {
-    "ethereum-cryptography": "2.2.1"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
+    "axios": "^1.16.0",
+    "dotenv": "^17.4.2",
+    "openai": "^6.37.0",
+    "viem": "^2.48.11"
   }
 }
