@@ -253,7 +253,8 @@ textarea {
 .kicker,
 .send-label,
 .agent-sub,
-.swap-sub {
+.swap-sub,
+.cli-sub {
   color: #b7f1c0;
   font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
   font-size: clamp(11px, 1.4vw, 13px);
@@ -306,7 +307,7 @@ h1,
 
 .actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(112px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
   gap: 14px;
   width: min(620px, 100%);
 }
@@ -435,6 +436,12 @@ h1,
   font-size: 11px;
 }
 
+.send-note {
+  color: rgba(190, 245, 199, 0.6);
+  font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+}
+
 .status {
   position: fixed;
   z-index: 3;
@@ -460,6 +467,19 @@ h1,
   text-align: center;
 }
 
+.send-head {
+  display: grid;
+  gap: 10px;
+}
+
+.send-sub {
+  color: rgba(190, 245, 199, 0.72);
+  font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .send-input,
 .chat-input {
   width: 100%;
@@ -477,6 +497,30 @@ h1,
   height: 64px;
   font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
   font-size: clamp(16px, 1.5vw, 20px);
+}
+
+.send-card {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  border: 1px solid rgba(154, 217, 166, 0.22);
+  background: rgba(5, 13, 7, 0.66);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 24px 48px rgba(0, 0, 0, 0.32);
+}
+
+.send-field {
+  display: grid;
+  gap: 10px;
+  text-align: left;
+}
+
+.send-field-label {
+  color: rgba(190, 245, 199, 0.72);
+  font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
 .chat-box {
@@ -538,8 +582,10 @@ h1,
 }
 
 .agent-response,
+.send-output,
 .swap-status,
-.swap-market-status {
+.swap-market-status,
+.cli-output {
   min-height: 18px;
   color: #b6eec1;
   font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
@@ -548,7 +594,9 @@ h1,
 }
 
 .agent-response,
-.swap-status {
+.send-output,
+.swap-status,
+.cli-output {
   opacity: 0;
   transform: translateY(-4px);
   transition: opacity 0.32s ease, transform 0.32s ease;
@@ -559,9 +607,97 @@ h1,
 }
 
 .agent-response.is-visible,
-.swap-status.is-visible {
+.send-output.is-visible,
+.swap-status.is-visible,
+.cli-output.is-visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+.send-output,
+.cli-output {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cli-shell {
+  width: min(760px, 100%);
+  display: grid;
+  gap: 24px;
+  text-align: left;
+}
+
+.cli-head {
+  display: grid;
+  gap: 10px;
+}
+
+.cli-title {
+  margin: 0;
+  color: #f3fff3;
+  font-weight: 860;
+  line-height: 0.92;
+  font-size: clamp(36px, 5vw, 56px);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.28), 0 18px 56px rgba(0, 0, 0, 0.78);
+}
+
+.cli-card,
+.cli-list-card {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid rgba(154, 217, 166, 0.22);
+  background: rgba(5, 13, 7, 0.66);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 24px 48px rgba(0, 0, 0, 0.32);
+}
+
+.cli-label {
+  color: rgba(190, 245, 199, 0.72);
+  font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.cli-input {
+  width: 100%;
+  min-height: 72px;
+  padding: 14px 16px;
+  border: 1px solid rgba(154, 217, 166, 0.62);
+  border-radius: 3px;
+  background: rgba(13, 32, 17, 0.78);
+  color: #f0fff2;
+  font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.cli-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.cli-list-title {
+  color: rgba(190, 245, 199, 0.72);
+  font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.cli-commands {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #d2ffda;
+  font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .swap-shell {

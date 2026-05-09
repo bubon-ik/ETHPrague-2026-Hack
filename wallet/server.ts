@@ -19,6 +19,8 @@ const PORT = Number(Bun.env.WALLET_PORT ?? 3030);
 const DEBUG = Bun.env.WALLET_DEBUG !== "0";
 const ZEROX_BASE_URL = "https://api.0x.org";
 const COINGECKO_BASE_URL = "https://api.coingecko.com/api/v3";
+const CLI_PATH = path.join(CURRENT_DIR, "cli.ts");
+const COMMANDS_PATH = path.join(CURRENT_DIR, "commands.md");
 
 const assets = {
   "/": {
@@ -219,6 +221,48 @@ async function readWalletAddress() {
   return { connected: false, source: "none", address: null };
 }
 
+function loadCommandCatalog() {
+  if (!fs.existsSync(COMMANDS_PATH)) return "";
+  return fs.readFileSync(COMMANDS_PATH, "utf8");
+}
+
+async function runCliCommand(commandText) {
+  const text = String(commandText ?? "").trim();
+  if (!text) {
+    throw new Error("command is empty");
+  }
+
+  const parts = text.split(/\s+/);
+  const command = parts[0];
+  if (!command) {
+    throw new Error("command is empty");
+  }
+  if (command !== "transfer_to" && command !== "commands") {
+    throw new Error(`unknown command: ${command}`);
+  }
+
+  const proc = Bun.spawn(["bun", CLI_PATH, ...parts], {
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    env: process.env,
+  });
+
+  const [stdout, stderr, exit] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  const output = stdout.trim();
+  if (exit !== 0) {
+    const errorText = stderr.trim() || output || `cli exited ${exit}`;
+    throw new Error(errorText);
+  }
+
+  return output || "cli: ok";
+}
+
 async function callApplet(method, input, options = {}) {
   const redactOutput = options.redactOutput === true;
   log(`bridge -> ${method} (len=${input.length}) ${truncate(input)}`);
@@ -287,6 +331,20 @@ const server = Bun.serve({
 
       if (url.pathname === "/api/market/prices" && req.method === "GET") {
         return proxyCoinGeckoPrices(url);
+      }
+
+      if (url.pathname === "/api/cli/commands" && req.method === "GET") {
+        const commands = loadCommandCatalog();
+        if (!commands) {
+          return jsonError("commands not found", 404);
+        }
+        return jsonOk({ commands });
+      }
+
+      if (url.pathname === "/api/cli" && req.method === "POST") {
+        const payload = await req.json().catch(() => ({}));
+        const output = await runCliCommand(payload.command);
+        return jsonOk({ output });
       }
 
       if (url.pathname === "/api/wallet/address" && req.method === "GET") {

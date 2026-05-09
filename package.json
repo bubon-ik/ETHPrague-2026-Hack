@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "upload": "bun run scripts/upload.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "wallet-cli": "bun run wallet/cli.ts"
   },
   "dependencies": {
     "ethereum-cryptography": "2.2.1"
