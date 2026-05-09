@@ -1,6 +1,29 @@
 import { StateGraph, Annotation, END, START } from "@langchain/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
 import { checkENSTool, prepareBuyTool } from "./tools.js";
+// Update your src/graph.ts to include this:
+import { supervisorNode, controlFlow } from "./supervisor.js";
+
+export const graph = new StateGraph(AgentState)
+    .addNode("supervisor", supervisorNode)
+    .addNode("ens_specialist", ensAgentNode)
+    .addNode("execute_tx", signerNode)
+
+    .addEdge(START, "supervisor")
+
+    // The supervisor decides where to go next
+    .addConditionalEdges(
+        "supervisor",
+        controlFlow
+    )
+
+    // After the specialist is done, it always goes back to supervisor
+    // to see if the user has more questions.
+    .addEdge("ens_specialist", "supervisor")
+
+    .compile({
+        interruptBefore: ["execute_tx"],
+    });
 
 // Define the "Memory" of our Agent
 const AgentState = Annotation.Root({
