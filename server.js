@@ -2,12 +2,20 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { URL } = require("url");
-const { formatEtherFromWei } = require("./server-utils");
+const {
+  SEPOLIA_CHAIN_ID,
+  SEPOLIA_TOKENS,
+  UNISWAP_SEPOLIA,
+  UNISWAP_V3_DEFAULT_FEE,
+  decodeFirstUint256,
+  encodeUniswapExactInputSingle,
+  encodeUniswapQuoteExactInputSingle,
+  formatEtherFromWei
+} = require("./server-utils");
 
 const ROOT = __dirname;
 const DIST = path.join(ROOT, "dist");
 const PORT = Number(process.env.PORT || 4173);
-const ZEROX_BASE_URL = "https://api.0x.org";
 const COINGECKO_BASE_URL = "https://api.coingecko.com/api/v3";
 const DEFAULT_SEPOLIA_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com";
 
@@ -83,59 +91,125 @@ function serveStatic(reqUrl, res) {
   });
 }
 
-function readSwapParams(reqUrl) {
+function isUsableAddress(value) {
+  return /^0x[0-9a-fA-F]{40}$/.test(value || "") && !/^0x0{40}$/i.test(value);
+}
+
+function readUniswapSwapParams(reqUrl) {
   const query = reqUrl.searchParams;
-  const chainId = query.get("chainId") || "1";
+  const chainId = Number(query.get("chainId") || SEPOLIA_CHAIN_ID);
   const sellToken = query.get("sellToken");
   const buyToken = query.get("buyToken");
   const sellAmount = query.get("sellAmount");
   const taker = query.get("taker") || process.env.SIMBA_TAKER_ADDRESS;
 
+  if (chainId !== SEPOLIA_CHAIN_ID) {
+    return { error: "Only Sepolia swaps are supported.", status: 400 };
+  }
+
   if (!sellToken || !buyToken || !sellAmount) {
-    return { error: "Missing sellToken, buyToken, or sellAmount." };
+    return { error: "Missing sellToken, buyToken, or sellAmount.", status: 400 };
+  }
+
+  if (!findSepoliaToken(sellToken) || !findSepoliaToken(buyToken)) {
+    return { error: "Unsupported Sepolia token pair.", status: 400 };
   }
 
   if (!taker || /^0x0{40}$/i.test(taker)) {
-    return { error: "Missing SIMBA_TAKER_ADDRESS. Add the generated wallet address to .env." };
+    return { error: "Missing SIMBA_TAKER_ADDRESS. Add the generated wallet address to .env.", status: 400 };
   }
 
-  return { chainId, sellToken, buyToken, sellAmount, taker };
+  return {
+    chainId,
+    sellToken,
+    buyToken,
+    sellAmount,
+    taker,
+    fee: Number(query.get("fee") || UNISWAP_V3_DEFAULT_FEE)
+  };
 }
 
-function isUsableAddress(value) {
-  return /^0x[0-9a-fA-F]{40}$/.test(value || "") && !/^0x0{40}$/i.test(value);
+function findSepoliaToken(address) {
+  const normalized = String(address || "").toLowerCase();
+  return Object.values(SEPOLIA_TOKENS).find((token) => token.address.toLowerCase() === normalized);
 }
 
-async function proxy0x(reqUrl, res, endpoint) {
-  if (!process.env.ZEROX_API_KEY) {
-    sendJson(res, 500, { error: "Missing ZEROX_API_KEY in .env." });
-    return;
+function toRpcQuantity(value) {
+  return `0x${BigInt(value).toString(16)}`;
+}
+
+function getSepoliaRpcUrl() {
+  return process.env.SEPOLIA_RPC_URL || DEFAULT_SEPOLIA_RPC_URL;
+}
+
+async function callSepoliaRpc(method, params) {
+  const rpcResponse = await fetch(getSepoliaRpcUrl(), {
+    method: "POST",
+    signal: AbortSignal.timeout(5000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
+  });
+  const payload = await rpcResponse.json().catch(() => ({}));
+  if (!rpcResponse.ok || payload.error) {
+    throw new Error(payload.error?.message || rpcResponse.statusText || "Sepolia RPC request failed.");
   }
+  return payload.result;
+}
 
-  const params = readSwapParams(reqUrl);
+async function quoteUniswap(params) {
+  const data = encodeUniswapQuoteExactInputSingle({
+    tokenIn: params.sellToken,
+    tokenOut: params.buyToken,
+    fee: params.fee,
+    amountIn: params.sellAmount
+  });
+  const result = await callSepoliaRpc("eth_call", [{ to: UNISWAP_SEPOLIA.quoterV2, data }, "latest"]);
+  return decodeFirstUint256(result);
+}
+
+async function proxyUniswap(reqUrl, res, endpoint) {
+  const params = readUniswapSwapParams(reqUrl);
   if (params.error) {
-    sendJson(res, 400, params);
+    sendJson(res, params.status || 400, { error: params.error });
     return;
-  }
-
-  const zeroExUrl = new URL(`${ZEROX_BASE_URL}/swap/allowance-holder/${endpoint}`);
-  for (const [key, value] of Object.entries(params)) {
-    zeroExUrl.searchParams.set(key, value);
   }
 
   try {
-    const zeroExResponse = await fetch(zeroExUrl, {
-      headers: {
-        "0x-api-key": process.env.ZEROX_API_KEY,
-        "0x-version": "v2",
-        "Content-Type": "application/json"
-      }
-    });
+    const buyAmount = await quoteUniswap(params);
+    const response = {
+      chainId: String(SEPOLIA_CHAIN_ID),
+      source: "Uniswap V3 Sepolia",
+      sellToken: params.sellToken,
+      buyToken: params.buyToken,
+      sellAmount: params.sellAmount,
+      buyAmount,
+      fee: params.fee
+    };
 
-    const payload = await zeroExResponse.json().catch(() => ({}));
-    sendJson(res, zeroExResponse.status, payload);
+    if (endpoint === "quote") {
+      const amountOutMinimum = (BigInt(buyAmount) * 9950n) / 10000n;
+      const data = encodeUniswapExactInputSingle({
+        tokenIn: params.sellToken,
+        tokenOut: params.buyToken,
+        fee: params.fee,
+        recipient: params.taker,
+        amountIn: params.sellAmount,
+        amountOutMinimum
+      });
+      const sellToken = findSepoliaToken(params.sellToken);
+      response.transaction = {
+        chainId: SEPOLIA_CHAIN_ID,
+        from: params.taker,
+        to: UNISWAP_SEPOLIA.swapRouter02,
+        data,
+        value: sellToken?.symbol === "ETH" ? toRpcQuantity(params.sellAmount) : "0x0"
+      };
+      response.minBuyAmount = amountOutMinimum.toString();
+    }
+
+    sendJson(res, 200, response);
   } catch (error) {
-    sendJson(res, 502, { error: "0x request failed.", detail: error.message });
+    sendJson(res, 502, { error: "Uniswap Sepolia request failed.", detail: error.message });
   }
 }
 
@@ -223,32 +297,15 @@ async function readWalletBalance(res) {
     return;
   }
 
-  const rpcUrl = process.env.SEPOLIA_RPC_URL || DEFAULT_SEPOLIA_RPC_URL;
   try {
-    const rpcResponse = await fetch(rpcUrl, {
-      method: "POST",
-      signal: AbortSignal.timeout(5000),
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "eth_getBalance",
-        params: [wallet.address, "latest"]
-      })
-    });
-    const payload = await rpcResponse.json().catch(() => ({}));
-    if (!rpcResponse.ok || payload.error || typeof payload.result !== "string") {
-      const detail = payload.error?.message || rpcResponse.statusText || "Invalid Sepolia RPC response.";
-      sendJson(res, 502, { error: "Sepolia balance request failed.", detail });
-      return;
-    }
+    const balanceWei = await callSepoliaRpc("eth_getBalance", [wallet.address, "latest"]);
 
     sendJson(res, 200, {
       ...wallet,
       network: "sepolia",
-      chainId: 11155111,
-      balanceWei: payload.result,
-      balanceEth: formatEtherFromWei(payload.result)
+      chainId: SEPOLIA_CHAIN_ID,
+      balanceWei,
+      balanceEth: formatEtherFromWei(balanceWei)
     });
   } catch (error) {
     sendJson(res, 502, { error: "Sepolia balance request failed.", detail: error.message });
@@ -264,12 +321,12 @@ const server = http.createServer((req, res) => {
   }
 
   if (reqUrl.pathname === "/api/swap/price") {
-    proxy0x(reqUrl, res, "price");
+    proxyUniswap(reqUrl, res, "price");
     return;
   }
 
   if (reqUrl.pathname === "/api/swap/quote") {
-    proxy0x(reqUrl, res, "quote");
+    proxyUniswap(reqUrl, res, "quote");
     return;
   }
 

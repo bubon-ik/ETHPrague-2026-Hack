@@ -1,14 +1,8 @@
 const WALLET_PENDING = "wallet.pending";
 
 const TOKENS = {
-  ETH: { symbol: "ETH", name: "Wrapped Ether", usd: 3200, cgId: "ethereum", balance: "2.4815", address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", decimals: 18 },
-  USDC: { symbol: "USDC", name: "USD Coin", usd: 1, cgId: "usd-coin", balance: "1 240.00", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
-  USDT: { symbol: "USDT", name: "Tether", usd: 1, cgId: "tether", balance: "980.50", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
-  DAI: { symbol: "DAI", name: "Dai", usd: 1, cgId: "dai", balance: "412.10", address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", decimals: 18 },
-  WBTC: { symbol: "WBTC", name: "Wrapped BTC", usd: 64000, cgId: "wrapped-bitcoin", balance: "0.0182", address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", decimals: 8 },
-  ARB: { symbol: "ARB", name: "Arbitrum", usd: 0.92, cgId: "arbitrum", balance: "320.00", address: "0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1", decimals: 18 },
-  OP: { symbol: "OP", name: "Optimism", usd: 1.85, cgId: "optimism", balance: "210.00", address: "0x4200000000000000000000000000000000000042", decimals: 18 },
-  MATIC: { symbol: "MATIC", name: "Polygon", usd: 0.78, cgId: "polygon-ecosystem-token", balance: "1 020.00", address: "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0", decimals: 18 },
+  ETH: { symbol: "ETH", name: "Sepolia ETH", usd: 3200, cgId: "ethereum", balance: "0.0", address: "0xfff9976782d46cc05630d1f6ebab18b2324d6b14", decimals: 18 },
+  USDC: { symbol: "USDC", name: "USDC Sepolia", usd: 1, cgId: "usd-coin", balance: "0.0", address: "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238", decimals: 6 },
 };
 
 const MARKET_IDS = Object.values(TOKENS).map((token) => token.cgId).join(",");
@@ -337,13 +331,13 @@ function scheduleLivePrice() {
   const toToken = TOKENS[swapState.to];
   swapPriceTimer = window.setTimeout(async () => {
     try {
-      const price = await request0x("price", fromToken, toToken, amount);
+      const price = await requestSwap("price", fromToken, toToken, amount);
       if (price.buyAmount) {
         swapState.output = fmt(Number(unitsToAmount(price.buyAmount, toToken.decimals)));
       }
-      swapState.status = "0x.price: live route ready";
+      swapState.status = "Uniswap.price: Sepolia route ready";
     } catch (error) {
-      swapState.status = `0x.price: ${error.message}; using mock route`;
+      swapState.status = `Uniswap.price: ${error.message}; using estimate`;
     }
     renderSwap();
   }, 450);
@@ -403,13 +397,13 @@ async function submitSwap() {
     renderSwap();
     return;
   }
-  swapState.status = "0x.quote: requesting transaction data";
+  swapState.status = "Uniswap.quote: requesting Sepolia transaction data";
   renderSwap();
   try {
-    await request0x("quote", TOKENS[swapState.from], TOKENS[swapState.to], swapState.amount);
-    swapState.status = `0x.quote: ready ${fmt(Number(swapState.amount))} ${swapState.from} \u2192 ${swapState.output} ${swapState.to}`;
+    const quote = await requestSwap("quote", TOKENS[swapState.from], TOKENS[swapState.to], swapState.amount);
+    swapState.status = `Uniswap.quote: tx ready ${fmt(Number(swapState.amount))} ${swapState.from} -> ${fmt(Number(unitsToAmount(quote.buyAmount, TOKENS[swapState.to].decimals)))} ${swapState.to}`;
   } catch (error) {
-    swapState.status = `0x.quote: ${error.message}`;
+    swapState.status = `Uniswap.quote: ${error.message}`;
   }
   renderSwap();
 }
@@ -484,9 +478,9 @@ function initAgent() {
   });
 }
 
-async function request0x(endpoint, fromToken, toToken, amount) {
+async function requestSwap(endpoint, fromToken, toToken, amount) {
   const params = new URLSearchParams({
-    chainId: "1",
+    chainId: "11155111",
     sellToken: fromToken.address,
     buyToken: toToken.address,
     sellAmount: amountToUnits(amount, fromToken.decimals),

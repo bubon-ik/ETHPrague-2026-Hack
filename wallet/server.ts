@@ -17,9 +17,24 @@ const DEVICE_PORT = Number(Bun.env.DEVICE_PORT ?? 4000);
 const HOST = Bun.env.WALLET_HOST ?? "127.0.0.1";
 const PORT = Number(Bun.env.WALLET_PORT ?? 3030);
 const DEBUG = Bun.env.WALLET_DEBUG !== "0";
-const ZEROX_BASE_URL = "https://api.0x.org";
 const COINGECKO_BASE_URL = "https://api.coingecko.com/api/v3";
 const DEFAULT_SEPOLIA_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com";
+const SEPOLIA_CHAIN_ID = 11155111;
+const UNISWAP_SEPOLIA = {
+  quoterV2: "0xed1f6473345f45b75f8179591dd5ba1888cf2fb3",
+  swapRouter02: "0x3bfa4769fb09eefc5a80d6e87c3b9c650f7ae48e",
+};
+const SEPOLIA_TOKENS = {
+  ETH: {
+    symbol: "ETH",
+    address: "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",
+  },
+  USDC: {
+    symbol: "USDC",
+    address: "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238",
+  },
+};
+const UNISWAP_V3_DEFAULT_FEE = 10000;
 
 const assets = {
   "/": {
@@ -120,21 +135,29 @@ async function fetchState() {
 
 function readSwapParams(url) {
   const query = url.searchParams;
-  const chainId = query.get("chainId") || "1";
+  const chainId = Number(query.get("chainId") || SEPOLIA_CHAIN_ID);
   const sellToken = query.get("sellToken");
   const buyToken = query.get("buyToken");
   const sellAmount = query.get("sellAmount");
   const taker = query.get("taker") || process.env.SIMBA_TAKER_ADDRESS;
 
+  if (chainId !== SEPOLIA_CHAIN_ID) {
+    return { error: "Only Sepolia swaps are supported." };
+  }
+
   if (!sellToken || !buyToken || !sellAmount) {
     return { error: "Missing sellToken, buyToken, or sellAmount." };
+  }
+
+  if (!findSepoliaToken(sellToken) || !findSepoliaToken(buyToken)) {
+    return { error: "Unsupported Sepolia token pair." };
   }
 
   if (!taker || /^0x0{40}$/i.test(taker)) {
     return { error: "Missing SIMBA_TAKER_ADDRESS. Add the generated wallet address to secrets.env." };
   }
 
-  return { chainId, sellToken, buyToken, sellAmount, taker };
+  return { chainId, sellToken, buyToken, sellAmount, taker, fee: Number(query.get("fee") || UNISWAP_V3_DEFAULT_FEE) };
 }
 
 function isUsableAddress(value) {
@@ -154,34 +177,128 @@ function formatEtherFromWei(hexWei) {
   return `${whole}.${fractionText}`;
 }
 
-async function proxy0x(url, endpoint) {
-  if (!process.env.ZEROX_API_KEY) {
-    return jsonError("Missing ZEROX_API_KEY in secrets.env.", 500);
-  }
+function functionSelector(signature) {
+  return toHex(keccak256(new TextEncoder().encode(signature))).slice(0, 8);
+}
 
+function cleanAddress(address) {
+  const value = String(address || "").toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(value)) {
+    throw new Error(`Invalid address: ${address}`);
+  }
+  return value.slice(2);
+}
+
+function encodeUint(value) {
+  return BigInt(value).toString(16).padStart(64, "0");
+}
+
+function encodeAddress(address) {
+  return cleanAddress(address).padStart(64, "0");
+}
+
+function encodeUniswapQuoteExactInputSingle(params) {
+  const selector = functionSelector("quoteExactInputSingle((address,address,uint256,uint24,uint160))");
+  return `0x${selector}${[
+    encodeAddress(params.tokenIn),
+    encodeAddress(params.tokenOut),
+    encodeUint(params.amountIn),
+    encodeUint(params.fee),
+    encodeUint(params.sqrtPriceLimitX96 || 0),
+  ].join("")}`;
+}
+
+function encodeUniswapExactInputSingle(params) {
+  const selector = functionSelector("exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))");
+  return `0x${selector}${[
+    encodeAddress(params.tokenIn),
+    encodeAddress(params.tokenOut),
+    encodeUint(params.fee),
+    encodeAddress(params.recipient),
+    encodeUint(params.amountIn),
+    encodeUint(params.amountOutMinimum),
+    encodeUint(params.sqrtPriceLimitX96 || 0),
+  ].join("")}`;
+}
+
+function decodeFirstUint256(hex) {
+  const clean = String(hex || "").replace(/^0x/, "");
+  if (clean.length < 64) throw new Error("Invalid uint256 response.");
+  return BigInt(`0x${clean.slice(0, 64)}`).toString();
+}
+
+function findSepoliaToken(address) {
+  const normalized = String(address || "").toLowerCase();
+  return Object.values(SEPOLIA_TOKENS).find((token) => token.address.toLowerCase() === normalized);
+}
+
+function toRpcQuantity(value) {
+  return `0x${BigInt(value).toString(16)}`;
+}
+
+async function callSepoliaRpc(method, params) {
+  const rpcResponse = await fetch(process.env.SEPOLIA_RPC_URL || DEFAULT_SEPOLIA_RPC_URL, {
+    method: "POST",
+    signal: AbortSignal.timeout(5000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const payload = await rpcResponse.json().catch(() => ({}));
+  if (!rpcResponse.ok || payload.error) {
+    throw new Error(payload.error?.message || rpcResponse.statusText || "Sepolia RPC request failed.");
+  }
+  return payload.result;
+}
+
+async function proxyUniswap(url, endpoint) {
   const params = readSwapParams(url);
   if (params.error) {
     return jsonError(params.error, 400);
   }
 
-  const zeroExUrl = new URL(`${ZEROX_BASE_URL}/swap/allowance-holder/${endpoint}`);
-  for (const [key, value] of Object.entries(params)) {
-    zeroExUrl.searchParams.set(key, value);
-  }
-
   try {
-    const zeroExResponse = await fetch(zeroExUrl, {
-      headers: {
-        "0x-api-key": process.env.ZEROX_API_KEY,
-        "0x-version": "v2",
-        "Content-Type": "application/json",
-      },
+    const data = encodeUniswapQuoteExactInputSingle({
+      tokenIn: params.sellToken,
+      tokenOut: params.buyToken,
+      fee: params.fee,
+      amountIn: params.sellAmount,
     });
+    const result = await callSepoliaRpc("eth_call", [{ to: UNISWAP_SEPOLIA.quoterV2, data }, "latest"]);
+    const buyAmount = decodeFirstUint256(result);
+    const response = {
+      chainId: String(SEPOLIA_CHAIN_ID),
+      source: "Uniswap V3 Sepolia",
+      sellToken: params.sellToken,
+      buyToken: params.buyToken,
+      sellAmount: params.sellAmount,
+      buyAmount,
+      fee: params.fee,
+    };
 
-    const payload = await zeroExResponse.json().catch(() => ({}));
-    return jsonOk(payload, zeroExResponse.status);
+    if (endpoint === "quote") {
+      const amountOutMinimum = (BigInt(buyAmount) * 9950n) / 10000n;
+      const txData = encodeUniswapExactInputSingle({
+        tokenIn: params.sellToken,
+        tokenOut: params.buyToken,
+        fee: params.fee,
+        recipient: params.taker,
+        amountIn: params.sellAmount,
+        amountOutMinimum,
+      });
+      const sellToken = findSepoliaToken(params.sellToken);
+      response.transaction = {
+        chainId: SEPOLIA_CHAIN_ID,
+        from: params.taker,
+        to: UNISWAP_SEPOLIA.swapRouter02,
+        data: txData,
+        value: sellToken?.symbol === "ETH" ? toRpcQuantity(params.sellAmount) : "0x0",
+      };
+      response.minBuyAmount = amountOutMinimum.toString();
+    }
+
+    return jsonOk(response);
   } catch (error) {
-    return jsonError("0x request failed.", 502, error.message);
+    return jsonError("Uniswap Sepolia request failed.", 502, error.message);
   }
 }
 
@@ -245,29 +362,14 @@ async function readWalletBalance() {
     };
   }
 
-  const rpcUrl = process.env.SEPOLIA_RPC_URL || DEFAULT_SEPOLIA_RPC_URL;
-  const rpcResponse = await fetch(rpcUrl, {
-    method: "POST",
-    signal: AbortSignal.timeout(5000),
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "eth_getBalance",
-      params: [wallet.address, "latest"],
-    }),
-  });
-  const payload = await rpcResponse.json().catch(() => ({}));
-  if (!rpcResponse.ok || payload.error || typeof payload.result !== "string") {
-    throw new Error(payload.error?.message || rpcResponse.statusText || "Invalid Sepolia RPC response.");
-  }
+  const balanceWei = await callSepoliaRpc("eth_getBalance", [wallet.address, "latest"]);
 
   return {
     ...wallet,
     network: "sepolia",
-    chainId: 11155111,
-    balanceWei: payload.result,
-    balanceEth: formatEtherFromWei(payload.result),
+    chainId: SEPOLIA_CHAIN_ID,
+    balanceWei,
+    balanceEth: formatEtherFromWei(balanceWei),
   };
 }
 
@@ -330,11 +432,11 @@ const server = Bun.serve({
 
     try {
       if (url.pathname === "/api/swap/price" && req.method === "GET") {
-        return proxy0x(url, "price");
+        return proxyUniswap(url, "price");
       }
 
       if (url.pathname === "/api/swap/quote" && req.method === "GET") {
-        return proxy0x(url, "quote");
+        return proxyUniswap(url, "quote");
       }
 
       if (url.pathname === "/api/market/prices" && req.method === "GET") {
