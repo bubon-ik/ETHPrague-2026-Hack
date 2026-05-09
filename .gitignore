@@ -37,3 +37,6 @@ agents/.env
 wallet/secrets.env
 agents/logs/
 swarm_tests/swarm-kv/examples/.env
+
+# Nested clone with its own .git (not a submodule of this repo)
+swarm_tests/examples/
