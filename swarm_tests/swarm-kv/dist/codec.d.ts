@@ -1,6 +1,6 @@
 /**
  * On-wire format for values. Single JSON document per upload for unified decoding.
- * Binary uses base64 inside JSON (fine for typical KV sizes; document limits in README).
+ * Binary uses base64 inside JSON (fine for typical KV sizes; see README for limits).
  */
 export type StoredKind = "text" | "json" | "binary";
 export type StoredEnvelope = {
@@ -17,6 +17,8 @@ export type StoredEnvelope = {
     b64: string;
 };
 export type DecodedValue = string | unknown | Uint8Array;
+/** Default cap for encoded payload size (envelope JSON bytes). */
+export declare const DEFAULT_MAX_ENCODED_VALUE_BYTES: number;
 export declare function encodeValue(value: unknown): Uint8Array;
 export declare function decodeValue(bytes: Uint8Array): DecodedValue;
 export declare function guessStoredKind(value: unknown): StoredKind;

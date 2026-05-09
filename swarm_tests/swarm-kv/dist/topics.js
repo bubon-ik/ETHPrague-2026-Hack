@@ -13,3 +13,4 @@ export function topicForIndex(namespace) {
         .digest("hex");
     return Topic.fromString(`kv:idx:${hash}`);
 }
+//# sourceMappingURL=topics.js.map

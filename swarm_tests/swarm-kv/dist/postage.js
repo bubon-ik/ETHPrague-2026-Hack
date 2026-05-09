@@ -8,3 +8,4 @@ export const POSTAGE_OPERATIONS = [
     "Each put also refreshes the index: one upload for the JSON index blob + one feed update on the index feed.",
     "Each delete(key): one index upload + one index feed update (value feeds are not rewritten).",
 ];
+//# sourceMappingURL=postage.js.map

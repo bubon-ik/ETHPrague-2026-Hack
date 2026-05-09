@@ -1,10 +1,9 @@
-import type { Bee, EthAddress, Reference } from "@ethersphere/bee-js";
-import type { Topic } from "@ethersphere/bee-js";
-export interface IndexFileV1 {
+import type { Bee } from "@ethersphere/bee-js";
+import type { EthAddress, Reference, Topic } from "@ethersphere/bee-js";
+export type IndexFileV1 = {
     v: 1;
-    /** Sorted unique keys for deterministic uploads */
     keys: string[];
-}
+};
 export declare function emptyIndex(): IndexFileV1;
 export declare function addKey(keys: string[], key: string): string[];
 export declare function removeKey(keys: string[], key: string): string[];

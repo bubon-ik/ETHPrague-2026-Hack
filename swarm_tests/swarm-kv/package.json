@@ -1,0 +1,31 @@
+{
+  "name": "swarm-kv",
+  "version": "0.1.0",
+  "description": "Key-value store on Swarm: get/put over feeds with a JSON index",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test \"test/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@ethersphere/bee-js": "^9.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  },
+  "license": "MIT",
+  "keywords": ["swarm", "bee", "key-value", "decentralized", "storage"]
+}

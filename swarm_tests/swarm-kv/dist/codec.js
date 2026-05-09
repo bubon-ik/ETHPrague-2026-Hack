@@ -1,7 +1,9 @@
 /**
  * On-wire format for values. Single JSON document per upload for unified decoding.
- * Binary uses base64 inside JSON (fine for typical KV sizes; document limits in README).
+ * Binary uses base64 inside JSON (fine for typical KV sizes; see README for limits).
  */
+/** Default cap for encoded payload size (envelope JSON bytes). */
+export const DEFAULT_MAX_ENCODED_VALUE_BYTES = 4 * 1024 * 1024;
 export function encodeValue(value) {
     const enc = new TextEncoder();
     if (value instanceof Uint8Array) {
@@ -71,3 +73,4 @@ function base64ToUint8Array(b64) {
         out[i] = bin.charCodeAt(i);
     return out;
 }
+//# sourceMappingURL=codec.js.map

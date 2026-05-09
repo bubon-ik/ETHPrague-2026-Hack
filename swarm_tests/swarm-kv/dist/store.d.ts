@@ -26,6 +26,18 @@ export interface SwarmKVConfig {
         operation: "value" | "index";
         byteLength: number;
     }) => void;
+    /**
+     * Reject `put` when the encoded envelope exceeds this many bytes (JSON UTF-8).
+     * Prevents accidentally uploading huge blobs through the JSON+binary envelope.
+     * @default {@link DEFAULT_MAX_ENCODED_VALUE_BYTES}
+     */
+    maxEncodedValueBytes?: number;
+    /**
+     * When true, `put` and `delete` run one at a time in this process so concurrent
+     * callers do not corrupt the shared index feed (last-writer-wins on Swarm still applies across devices).
+     * @default true
+     */
+    serializeMutations?: boolean;
 }
 export declare class SwarmKV {
     readonly bee: Bee;
@@ -36,6 +48,8 @@ export declare class SwarmKV {
     private readonly indexTopic;
     private readonly settleMs;
     private readonly onStampUse?;
+    private readonly maxEncodedBytes;
+    private readonly mutationQueue;
     constructor(config: SwarmKVConfig);
     private trace;
     private settle;

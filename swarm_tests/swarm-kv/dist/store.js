@@ -1,9 +1,20 @@
 import { Bee, PrivateKey, } from "@ethersphere/bee-js";
-import { decodeValue, encodeValue, } from "./codec.js";
+import { decodeValue, encodeValue, DEFAULT_MAX_ENCODED_VALUE_BYTES, } from "./codec.js";
 import { addKey, readIndexFromFeed, removeKey, } from "./index-store.js";
 import { topicForIndex, topicForKvKey } from "./topics.js";
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+/** Serialize async mutations; errors do not break the queue. */
+function createMutationQueue() {
+    let tail = Promise.resolve();
+    return {
+        run(fn) {
+            const job = tail.then(() => fn());
+            tail = job.catch(() => { });
+            return job;
+        },
+    };
 }
 export class SwarmKV {
     bee;
@@ -14,6 +25,8 @@ export class SwarmKV {
     indexTopic;
     settleMs;
     onStampUse;
+    maxEncodedBytes;
+    mutationQueue;
     constructor(config) {
         this.bee = new Bee(config.beeUrl);
         this.batchId = config.batchId;
@@ -26,6 +39,11 @@ export class SwarmKV {
         this.indexTopic = topicForIndex(this.namespace);
         this.settleMs = config.feedSettleMs ?? 400;
         this.onStampUse = config.onStampUse;
+        this.maxEncodedBytes =
+            config.maxEncodedValueBytes ?? DEFAULT_MAX_ENCODED_VALUE_BYTES;
+        const ser = config.serializeMutations;
+        this.mutationQueue =
+            ser === false ? { run: (fn) => fn() } : createMutationQueue();
     }
     trace(op, byteLength) {
         this.onStampUse?.({ operation: op, byteLength });
@@ -48,16 +66,22 @@ export class SwarmKV {
      * Store a value. Strings, plain JSON-serializable values, and binary (`Uint8Array`) are supported.
      */
     async put(key, value) {
-        const topic = topicForKvKey(this.namespace, key);
-        const writer = this.bee.makeFeedWriter(topic, this.privateKey);
-        const bytes = encodeValue(value);
-        this.trace("value", bytes.byteLength);
-        const { reference } = await this.bee.uploadData(this.batchId, bytes);
-        await writer.upload(this.batchId, reference);
-        const index = await this.getIndex();
-        const next = { v: 1, keys: addKey(index.keys, key) };
-        await this.saveIndex(next);
-        await this.settle();
+        return this.mutationQueue.run(async () => {
+            const bytes = encodeValue(value);
+            if (bytes.byteLength > this.maxEncodedBytes) {
+                throw new Error(`swarm-kv: encoded value is ${bytes.byteLength} bytes (max ${this.maxEncodedBytes}). ` +
+                    "Use a smaller value, raise maxEncodedValueBytes, or store large blobs outside this KV format.");
+            }
+            const topic = topicForKvKey(this.namespace, key);
+            const writer = this.bee.makeFeedWriter(topic, this.privateKey);
+            this.trace("value", bytes.byteLength);
+            const { reference } = await this.bee.uploadData(this.batchId, bytes);
+            await writer.upload(this.batchId, reference);
+            const index = await this.getIndex();
+            const next = { v: 1, keys: addKey(index.keys, key) };
+            await this.saveIndex(next);
+            await this.settle();
+        });
     }
     /**
      * Read a value. Returns `undefined` if the key is not in the index or data is missing.
@@ -88,13 +112,15 @@ export class SwarmKV {
      * Remove a key from the logical store (index). Does not erase old feed history on-chain.
      */
     async delete(key) {
-        const index = await this.getIndex();
-        if (!index.keys.includes(key))
-            return false;
-        const next = { v: 1, keys: removeKey(index.keys, key) };
-        await this.saveIndex(next);
-        await this.settle();
-        return true;
+        return this.mutationQueue.run(async () => {
+            const index = await this.getIndex();
+            if (!index.keys.includes(key))
+                return false;
+            const next = { v: 1, keys: removeKey(index.keys, key) };
+            await this.saveIndex(next);
+            await this.settle();
+            return true;
+        });
     }
     /** Whether the key appears in the index. */
     async has(key) {
@@ -116,3 +142,4 @@ export class SwarmKV {
         }
     }
 }
+//# sourceMappingURL=store.js.map
