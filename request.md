@@ -35,3 +35,16 @@ yes, it is not save and not how we want in reality use it, but it is all that we
 server will get that private key and make from it real eth address
 
 you can code that in wallet/ folder. can you?
+
+
+
+
+
+
+
+
+codex, now your tasc is this. in folder 
+folder-to-be-deleted-use-this-to-update-frontend/ my teammate vibecoded some bulshit. it does not work. but we need his UI. I need you to copi that UI to the wallet/ folder, so out frontend looks same and has same functionality like agent, swap, safe storge of keys like in secrets.env in wallet / folder.
+
+for frontend we might use npm and react if that is good solution. Just keep in mind that i dont like long solutions, prefer if you keep it stupid simple, dont fix security issues, it ois jyust a demo, hackaton.
+

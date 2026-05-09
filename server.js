@@ -100,6 +100,10 @@ function readSwapParams(reqUrl) {
   return { chainId, sellToken, buyToken, sellAmount, taker };
 }
 
+function isUsableAddress(value) {
+  return /^0x[0-9a-fA-F]{40}$/.test(value || "") && !/^0x0{40}$/i.test(value);
+}
+
 async function proxy0x(reqUrl, res, endpoint) {
   if (!process.env.ZEROX_API_KEY) {
     sendJson(res, 500, { error: "Missing ZEROX_API_KEY in .env." });
@@ -166,6 +170,42 @@ async function proxyCoinGeckoPrices(reqUrl, res) {
   }
 }
 
+async function readWalletAddress(res) {
+  const walletApiUrl = process.env.WALLET_API_URL || "http://127.0.0.1:3030/api/state";
+  try {
+    const walletResponse = await fetch(walletApiUrl, {
+      signal: AbortSignal.timeout(1800),
+      headers: { "Accept": "application/json" }
+    });
+    const payload = await walletResponse.json().catch(() => ({}));
+    if (walletResponse.ok && isUsableAddress(payload.address)) {
+      sendJson(res, 200, {
+        connected: true,
+        source: "space-computer",
+        address: payload.address
+      });
+      return;
+    }
+  } catch {
+    // Fall back to .env below while the Space Computer wallet service is offline.
+  }
+
+  if (isUsableAddress(process.env.SIMBA_TAKER_ADDRESS)) {
+    sendJson(res, 200, {
+      connected: true,
+      source: "env",
+      address: process.env.SIMBA_TAKER_ADDRESS
+    });
+    return;
+  }
+
+  sendJson(res, 200, {
+    connected: false,
+    source: "none",
+    address: null
+  });
+}
+
 const server = http.createServer((req, res) => {
   const reqUrl = new URL(req.url, `http://${req.headers.host}`);
 
@@ -186,6 +226,11 @@ const server = http.createServer((req, res) => {
 
   if (reqUrl.pathname === "/api/market/prices") {
     proxyCoinGeckoPrices(reqUrl, res);
+    return;
+  }
+
+  if (reqUrl.pathname === "/api/wallet/address") {
+    readWalletAddress(res);
     return;
   }
 
