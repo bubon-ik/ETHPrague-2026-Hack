@@ -255,12 +255,43 @@ function SendPage({ navigate }) {
 
 function AgentPage({ navigate }) {
   const [prompt, setPrompt] = useState("");
-  const [response, setResponse] = useState("");
-  const suggestions = ["Analyze wallet security", "Check token contract", "Generate a safe swap route", "Scan for phishing"];
+  const [messages, setMessages] = useState([
+    {
+      id: "intro",
+      role: "agent",
+      text: "Simba Agent online. Ask me to inspect a wallet, prepare a swap, or explain a token route."
+    }
+  ]);
+  const messagesRef = useRef(null);
 
   const submit = () => {
-    setResponse(prompt.trim() ? "agent.request: queued for API connection" : "agent.input: waiting for a request");
+    const text = prompt.trim();
+    if (!text) return;
+
+    const nextMessages = [
+      ...messages,
+      { id: `user-${Date.now()}`, role: "user", text },
+      {
+        id: `agent-${Date.now()}`,
+        role: "agent",
+        text: "agent.request: queued for API connection"
+      }
+    ];
+    setMessages(nextMessages);
+    setPrompt("");
   };
+
+  const handlePromptKeyDown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      submit();
+    }
+  };
+
+  useEffect(() => {
+    const node = messagesRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [messages]);
 
   return (
     <Shell>
@@ -270,27 +301,29 @@ function AgentPage({ navigate }) {
             <div className="agent-sub">Autonomous Web3 Security Agent</div>
             <h1 className="agent-title">Simba Agent</h1>
           </div>
-          <div className="chat-box">
-            <textarea
-              className="chat-input"
-              placeholder="What can Simba do for you?"
-              rows="1"
-              value={prompt}
-              onChange={(event) => {
-                setPrompt(event.target.value);
-                setResponse("");
-              }}
-            />
-            <button className="chat-send" type="button" aria-label="Send" onClick={submit}>→</button>
+          <div className="agent-chat-window">
+            <div ref={messagesRef} className="agent-messages" aria-live="polite">
+              {messages.map((message) => (
+                <div key={message.id} className={`message-row ${message.role === "user" ? "is-user" : "is-agent"}`}>
+                  <div className="message-bubble">
+                    <span className="message-role">{message.role === "user" ? "You" : "Simba"}</span>
+                    <p>{message.text}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="chat-box">
+              <textarea
+                className="chat-input"
+                placeholder="Message Simba Agent"
+                rows="1"
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                onKeyDown={handlePromptKeyDown}
+              />
+              <button className="chat-send" type="button" aria-label="Send" onClick={submit}>→</button>
+            </div>
           </div>
-          <div className="suggestions">
-            {suggestions.map((item) => (
-              <button key={item} className="chip" type="button" onClick={() => { setPrompt(item); setResponse(""); }}>
-                {item}
-              </button>
-            ))}
-          </div>
-          <div className={`agent-response ${response ? "is-visible" : ""}`} aria-live="polite">{response}</div>
           <BackLink navigate={navigate} />
         </div>
       </main>
