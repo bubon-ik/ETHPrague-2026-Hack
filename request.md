@@ -48,3 +48,18 @@ folder-to-be-deleted-use-this-to-update-frontend/ my teammate vibecoded some bul
 
 for frontend we might use npm and react if that is good solution. Just keep in mind that i dont like long solutions, prefer if you keep it stupid simple, dont fix security issues, it ois jyust a demo, hackaton.
 
+
+
+
+
+
+
+we are doing demo. not real product. it is hackaton. dont worry about bad practisies. 
+main idea was to sign transactions in mk2 armory, but it is not possible to do in time and with our resources. 
+your goal is to create some api or cli for transactions. in there will be possible to formulate commands like 
+```
+transfer_to 0x<wallet_address> 0.01 ETH
+```
+this is example of such command. all the commands that we will create, should be written somewhere and used as a prompt for ai agent which will be later integrated to out programm.
+right now you can access private key from mk2. we will use it to sign such transactions on host machine. not im mk2. 
+can you pleas realize functionality of cli and transfer now? 

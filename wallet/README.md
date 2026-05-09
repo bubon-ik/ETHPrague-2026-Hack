@@ -18,6 +18,26 @@ If you want verbose request logging in the terminal:
 
 - WALLET_DEBUG=1 bun run wallet/server.ts
 
+## CLI (transactions)
+
+1. Make sure the applet is uploaded and the USB link is up.
+2. Set an RPC endpoint (Sepolia recommended):
+   - RPC_URL=https://your-rpc-endpoint
+3. Run a transfer command:
+
+```
+bun run wallet/cli.ts transfer_to 0x1234567890abcdef1234567890abcdef12345678 0.01 ETH
+```
+
+Optional flags:
+- --dry-run (build + sign only, no broadcast)
+- --gas-limit 21000
+- --gas-price-gwei 5
+- --nonce 0
+- --chain-id 11155111
+
+Commands are listed in wallet/commands.md for the AI prompt.
+
 ## Applet methods
 
 - Wallet.Init

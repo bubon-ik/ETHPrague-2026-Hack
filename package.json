@@ -8,7 +8,8 @@
     "build": "vite build",
     "start": "node server.js",
     "upload": "bun run scripts/upload.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "wallet-cli": "bun run wallet/cli.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",

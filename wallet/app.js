@@ -16,6 +16,7 @@ const MARKET_IDS = Object.values(TOKENS).map((token) => token.cgId).join(",");
 const pages = {
   home: document.getElementById("page-home"),
   send: document.getElementById("page-send"),
+  cli: document.getElementById("page-cli"),
   agent: document.getElementById("page-agent"),
   swap: document.getElementById("page-swap"),
 };
@@ -27,6 +28,14 @@ const statusWalletAddressEl = document.getElementById("status-wallet-address");
 const initBtn = document.getElementById("initBtn");
 const rotateBtn = document.getElementById("rotateBtn");
 const walletAlertEl = document.getElementById("wallet-alert");
+const sendToInput = document.getElementById("send-to");
+const sendAmountInput = document.getElementById("send-amount");
+const sendSubmitBtn = document.getElementById("send-submit");
+const sendStatusEl = document.getElementById("send-status");
+const cliInput = document.getElementById("cli-input");
+const cliRunBtn = document.getElementById("cli-run");
+const cliOutputEl = document.getElementById("cli-output");
+const cliCommandsEl = document.getElementById("cli-commands");
 
 const swapEls = {
   fromAmount: document.getElementById("from-amount"),
@@ -276,6 +285,126 @@ function startWalletPolling() {
   walletTimer = window.setInterval(loadWalletAddress, 5000);
 }
 
+function setOutput(el, message) {
+  if (!el) return;
+  el.textContent = message || "";
+  el.classList.toggle("is-visible", Boolean(message));
+}
+
+function setSendStatus(message) {
+  setOutput(sendStatusEl, message);
+}
+
+function setCliOutput(message) {
+  setOutput(cliOutputEl, message);
+}
+
+async function runCli(command) {
+  const response = await fetch("/api/cli", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command }),
+  });
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {
+    payload = {};
+  }
+  if (!response.ok) throw new Error(payload.error || response.statusText);
+  return payload.output || "cli: ok";
+}
+
+function buildTransferCommand() {
+  if (!sendToInput || !sendAmountInput) return "";
+  const to = sendToInput.value.trim();
+  const amount = sendAmountInput.value.trim();
+
+  if (!to) throw new Error("send.to: enter a recipient address");
+  if (!/^0x[0-9a-fA-F]{40}$/.test(to)) {
+    throw new Error("send.to: invalid address");
+  }
+  if (!amount) throw new Error("send.amount: enter an amount");
+  if (!/^\d+(\.\d+)?$/.test(amount)) {
+    throw new Error("send.amount: invalid amount");
+  }
+
+  return `transfer_to ${to} ${amount} ETH`;
+}
+
+function initSend() {
+  if (!sendToInput || !sendAmountInput || !sendSubmitBtn || !sendStatusEl) return;
+  const clear = () => setSendStatus("");
+  sendToInput.addEventListener("input", clear);
+  sendAmountInput.addEventListener("input", clear);
+  sendAmountInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      sendSubmitBtn.click();
+    }
+  });
+
+  sendSubmitBtn.addEventListener("click", async () => {
+    sendSubmitBtn.disabled = true;
+    setSendStatus("send.run: executing...");
+    try {
+      const command = buildTransferCommand();
+      const output = await runCli(command);
+      setSendStatus(output);
+    } catch (error) {
+      setSendStatus(`send.error: ${error.message || "request failed"}`);
+    } finally {
+      sendSubmitBtn.disabled = false;
+    }
+  });
+}
+
+async function loadCliCommands() {
+  if (!cliCommandsEl) return;
+  try {
+    const response = await fetch("/api/cli/commands");
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch {
+      payload = {};
+    }
+    if (!response.ok) throw new Error(payload.error || response.statusText);
+    cliCommandsEl.textContent = payload.commands || "no commands";
+  } catch (error) {
+    cliCommandsEl.textContent = `commands: ${error.message || "unavailable"}`;
+  }
+}
+
+function initCli() {
+  if (!cliInput || !cliRunBtn || !cliOutputEl) return;
+  cliInput.addEventListener("input", () => setCliOutput(""));
+  cliInput.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      cliRunBtn.click();
+    }
+  });
+  cliRunBtn.addEventListener("click", async () => {
+    const command = cliInput.value.trim();
+    if (!command) {
+      setCliOutput("cli.input: enter a command");
+      return;
+    }
+    cliRunBtn.disabled = true;
+    setCliOutput("cli.run: executing...");
+    try {
+      const output = await runCli(command);
+      setCliOutput(output);
+    } catch (error) {
+      setCliOutput(`cli.error: ${error.message || "request failed"}`);
+    } finally {
+      cliRunBtn.disabled = false;
+    }
+  });
+  loadCliCommands();
+}
+
 function updateMockOutput() {
   const fromToken = TOKENS[swapState.from];
   const toToken = TOKENS[swapState.to];
@@ -491,6 +620,8 @@ function initApp() {
   initMatrix();
   bindRoutes();
   bindWalletActions();
+  initSend();
+  initCli();
   initAgent();
   initSwap();
   startWalletPolling();
