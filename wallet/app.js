@@ -274,6 +274,21 @@ function setWalletAddress(address, connected) {
   }
 }
 
+function formatFetchError(error) {
+  const msg = error?.message || String(error);
+  if (typeof location !== "undefined" && location.protocol === "file:") {
+    return "This page was opened as a local file. Start the wallet server and open the printed URL: bun run wallet-ui";
+  }
+  if (
+    msg === "Failed to fetch" ||
+    msg === "Load failed" ||
+    error?.name === "TypeError"
+  ) {
+    return "Cannot reach the wallet server. From the project root run: bun run wallet-ui — then open http://127.0.0.1:3030 (same machine). If the server is already running, check the port in the terminal.";
+  }
+  return msg;
+}
+
 async function loadWalletAddress() {
   try {
     const response = await fetch("/api/wallet/address");
@@ -316,7 +331,7 @@ async function runWalletAction(path, label, button) {
     showWalletAlert(`${label}: ${payload.result || "ok"}`);
     await loadWalletAddress();
   } catch (error) {
-    showWalletAlert(error.message || "request failed");
+    showWalletAlert(formatFetchError(error));
   } finally {
     if (button) button.disabled = false;
   }
@@ -590,6 +605,9 @@ function initAgent() {
   const sendEl = document.getElementById("agent-send");
   if (!threadEl || !inputEl || !sendEl) return;
 
+  /** OpenAI-style turns for `/api/agent/chat` so "confirm" keeps quote context. */
+  const agentHistory = [];
+
   const addMessage = (role, text) => {
     const item = document.createElement("div");
     item.className = `chat-message ${role}`;
@@ -622,17 +640,21 @@ function initAgent() {
 
     try {
       addMessage("assistant", "Simba: thinking…");
+      const historyForApi = agentHistory.slice();
+      agentHistory.push({ role: "user", content: text });
       const response = await fetch("/api/agent/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, history: historyForApi }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(payload.error || payload.detail || `HTTP ${response.status}`);
       }
       threadEl.querySelector(".chat-message:last-child .chat-bubble")?.parentElement?.remove();
-      addMessage("assistant", payload.reply?.trim() ? payload.reply : "Simba: (no text reply)");
+      const replyText = payload.reply?.trim() ? payload.reply : "Simba: (no text reply)";
+      addMessage("assistant", replyText);
+      agentHistory.push({ role: "assistant", content: replyText });
     } catch (error) {
       threadEl.querySelector(".chat-message:last-child .chat-bubble")?.parentElement?.remove();
       addMessage("assistant", `agent.error: ${error.message || "request failed"}`);

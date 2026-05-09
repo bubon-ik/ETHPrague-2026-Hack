@@ -846,7 +846,7 @@ async function getSupervisorAgent() {
       "OPENAI_API_KEY not set. Add it to agents/.env or export it in the shell.",
     );
   }
-  const mod = await import("../agents/src/supervisor.js");
+  const mod = await import(new URL("../agents/src/supervisor.js", import.meta.url).href);
   supervisorAgent = new mod.SupervisorAgent(apiKey);
   return supervisorAgent;
 }
@@ -961,6 +961,10 @@ const server = Bun.serve({
     }
 
     try {
+      if (url.pathname === "/api/health" && req.method === "GET") {
+        return jsonOk({ ok: true, service: "simba-wallet" });
+      }
+
       if (url.pathname === "/api/swap/price" && req.method === "GET") {
         return proxyUniswap(url, "price");
       }
@@ -1005,8 +1009,20 @@ const server = Bun.serve({
         if (!message) {
           return jsonError("missing message", 400);
         }
+
+        const marketMod = await import(
+          new URL("../agents/src/agents/marketAgent.js", import.meta.url).href
+        );
+        const shortcutResult = await marketMod.executeLatestPendingIfConfirmed(message);
+        if (shortcutResult != null) {
+          return jsonOk({
+            reply: marketMod.formatExecuteResultForChat(shortcutResult),
+          });
+        }
+
         const supervisor = await getSupervisorAgent();
-        const reply = await supervisor.handleRequest(message);
+        const history = Array.isArray(payload.history) ? payload.history : [];
+        const reply = await supervisor.handleRequest(message, { history });
         return jsonOk({ reply: reply ?? "" });
       }
 

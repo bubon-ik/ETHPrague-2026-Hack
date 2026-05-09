@@ -1,5 +1,9 @@
 import dotenv from 'dotenv';
 import readline from 'readline';
+import {
+  executeLatestPendingIfConfirmed,
+  formatExecuteResultForChat,
+} from './src/agents/marketAgent.js';
 import { SupervisorAgent } from './src/supervisor.js';
 
 dotenv.config();
@@ -12,6 +16,7 @@ async function main() {
   }
 
   const supervisor = new SupervisorAgent(apiKey);
+  const cliHistory = [];
   console.log("======================================================");
   console.log("🤖 Multi-Agent System Simulation Started");
   console.log("======================================================");
@@ -39,8 +44,19 @@ async function main() {
         return;
       }
 
-      await supervisor.handleRequest(input);
-      
+      const msg = input.trim();
+      const shortcut = await executeLatestPendingIfConfirmed(msg);
+      let reply;
+      if (shortcut != null) {
+        reply = formatExecuteResultForChat(shortcut);
+        console.log(`\n${reply}\n`);
+      } else {
+        reply = await supervisor.handleRequest(msg, { history: cliHistory });
+      }
+      cliHistory.push({ role: "user", content: msg });
+      cliHistory.push({ role: "assistant", content: reply ?? "" });
+      if (cliHistory.length > 80) cliHistory.splice(0, cliHistory.length - 80);
+
       // Prompt again after the response
       console.log("\n------------------------------------------------------");
       askQuestion();
