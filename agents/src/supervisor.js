@@ -32,6 +32,9 @@ function mergeMarketToolPayload(args) {
   copyIfMissing("amount");
   copyIfMissing("token");
   copyIfMissing("domain");
+  copyIfMissing("to");
+  copyIfMissing("recipient", "to");
+  copyIfMissing("address", "to");
   copyIfMissing("value", "amount");
   copyIfMissing("eth", "amount");
   copyIfMissing("sellAmount", "amount");
@@ -93,15 +96,18 @@ const tools = [
     function: {
       name: "prepare_market_action",
       description:
-        "First step for value-moving actions on Sepolia: get a quote (swap OR ENS registration fee). Returns approval_id — no spend yet. For BUY_DOMAIN: only after check_domain was AVAILABLE and the user agreed to register on Sepolia; use payload { domain: 'name.eth' } matching the checked name. For SWAP_TOKEN: payload { token, amount }. After showing the quote, ask confirmation; then execute_market_action. Fields may be top-level or inside payload.",
+        "First step for value-moving actions on Sepolia: quote (swap, ENS registration fee, OR native ETH send). Returns approval_id — no spend yet. For BUY_DOMAIN: only after check_domain was AVAILABLE and the user agreed to register on Sepolia; use payload { domain: 'name.eth' } matching the checked name. For SWAP_TOKEN: payload { token, amount }. For SEND_NATIVE: payload { to: '0x...', amount } — native Sepolia ETH only, not ERC-20. After showing the quote, ask confirmation; then execute_market_action. Fields may be top-level or inside payload.",
       parameters: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["BUY_DOMAIN", "SWAP_TOKEN"] },
+          action: {
+            type: "string",
+            enum: ["BUY_DOMAIN", "SWAP_TOKEN", "SEND_NATIVE"],
+          },
           payload: {
             type: "object",
             description:
-              "BUY_DOMAIN: { domain: 'name.eth' }. SWAP_TOKEN: { token: 'ETH'|'USDC', amount: number or string } — any positive decimal (e.g. 0.01). Same fields may be passed at top level instead.",
+              "BUY_DOMAIN: { domain: 'name.eth' }. SWAP_TOKEN: { token: 'ETH'|'USDC', amount }. SEND_NATIVE: { to: '0x...', amount } in ETH (e.g. 0.01). Same fields may be passed at top level instead.",
           },
           duration_years: {
             type: "number",
@@ -122,6 +128,11 @@ const tools = [
             description:
               "Optional alternative to payload.domain for BUY_DOMAIN.",
           },
+          to: {
+            type: "string",
+            description:
+              "Optional alternative to payload.to — recipient 0x address for SEND_NATIVE.",
+          },
         },
         required: ["action"],
       },
@@ -132,15 +143,18 @@ const tools = [
     function: {
       name: "execute_market_action",
       description:
-        "Second step: submit on-chain txs ONLY after the user approved the prepare_market_action quote. Same approval_id, action, and payload as prepare (BUY_DOMAIN: same domain string; SWAP_TOKEN: same token/amount). Use after user says yes/confirm to the quoted fees.",
+        "Second step: submit on-chain txs ONLY after the user approved the prepare_market_action quote. Same approval_id, action, and payload as prepare (BUY_DOMAIN: same domain; SWAP_TOKEN: same token/amount; SEND_NATIVE: same to + amount). Use after user says yes/confirm.",
       parameters: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["BUY_DOMAIN", "SWAP_TOKEN"] },
+          action: {
+            type: "string",
+            enum: ["BUY_DOMAIN", "SWAP_TOKEN", "SEND_NATIVE"],
+          },
           payload: {
             type: "object",
             description:
-              "Must match prepare: BUY_DOMAIN { domain }. SWAP_TOKEN { token, amount } — same decimals as quoted (e.g. 0.001). May use top-level fields instead.",
+              "Must match prepare: BUY_DOMAIN { domain }. SWAP_TOKEN { token, amount }. SEND_NATIVE { to, amount } — same decimals as quoted. May use top-level fields instead.",
           },
           approval_id: {
             type: "string",
@@ -157,6 +171,11 @@ const tools = [
           domain: {
             type: "string",
             description: "Must match prepare — optional alternative to payload.domain.",
+          },
+          to: {
+            type: "string",
+            description:
+              "Must match prepare — optional alternative to payload.to for SEND_NATIVE.",
           },
         },
         required: ["action", "approval_id"],

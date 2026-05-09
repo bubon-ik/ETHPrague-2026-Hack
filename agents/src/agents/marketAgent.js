@@ -7,13 +7,16 @@
  *
  * SWAP_TOKEN: Uniswap V3 Sepolia (same router as wallet stack).
  * BUY_DOMAIN: Sepolia ENS ETHRegistrarController — commit → wait minCommitmentAge → register.
+ * SEND_NATIVE: native Sepolia ETH transfer to a checksummed 0x address (prepare → approve → execute).
  */
 
 import crypto from "node:crypto";
 import {
   createPublicClient,
   createWalletClient,
+  getAddress,
   http,
+  isAddress,
   parseEther,
   parseUnits,
 } from "viem";
@@ -473,6 +476,59 @@ function secondsFromYears(years) {
   return BigInt(Math.round(y * 365 * 24 * 60 * 60));
 }
 
+function coerceSendPayload(raw) {
+  const p =
+    raw != null && typeof raw === "object" && !Array.isArray(raw)
+      ? { ...raw }
+      : {};
+  const to = firstDefined(p.to, p.recipient, p.address, p.destination);
+  const amount = firstDefined(
+    p.amount,
+    p.value,
+    p.eth,
+    p.sendAmount,
+    p.quantity,
+  );
+  return { ...p, to, amount };
+}
+
+/**
+ * @returns {{ checksummedTo: `0x${string}`, canonicalAmount: string, valueWei: bigint }}
+ */
+function parseSendNativePayload(rawPayload) {
+  const p = coerceSendPayload(rawPayload);
+  const rawTo = p.to;
+  if (rawTo == null || String(rawTo).trim() === "") {
+    throw new Error(
+      "Missing recipient. Use payload.to (0x address), or recipient / address.",
+    );
+  }
+  const s = String(rawTo).trim();
+  if (!isAddress(s)) {
+    throw new Error(`Invalid recipient address: ${s}`);
+  }
+  const checksummedTo = getAddress(s);
+  const zero = "0x0000000000000000000000000000000000000000";
+  if (checksummedTo.toLowerCase() === zero) {
+    throw new Error("Cannot send to the zero address.");
+  }
+
+  const { canonicalStr, units } = canonicalSwapAmountString(p.amount, "ETH");
+  const maxHuman = maxSwapAmount();
+  const maxWei = parseEther(String(maxHuman));
+  if (units > maxWei) {
+    throw new Error(
+      `amount exceeds MARKET_MAX_SWAP_AMOUNT (${maxHuman} ETH) for native sends.`,
+    );
+  }
+
+  return {
+    checksummedTo,
+    canonicalAmount: canonicalStr,
+    valueWei: units,
+  };
+}
+
 function parseEnsLabel(domainInput) {
   const normalized = normalize(String(domainInput ?? "").trim());
   const parts = normalized.split(".");
@@ -530,12 +586,24 @@ function payloadMatchesPending(pending, action, payload) {
       return false;
     }
   }
+  if (action === "SEND_NATIVE") {
+    try {
+      const a = parseSendNativePayload(payload);
+      const b = parseSendNativePayload(pending.payload);
+      return (
+        a.checksummedTo === b.checksummedTo &&
+        a.valueWei === b.valueWei
+      );
+    } catch {
+      return false;
+    }
+  }
   return false;
 }
 
 /**
  * Price check only — stores pending approval in memory.
- * @param {string} action BUY_DOMAIN | SWAP_TOKEN
+ * @param {string} action BUY_DOMAIN | SWAP_TOKEN | SEND_NATIVE
  * @param {object} payload
  * @param {number} [durationYears] registration length for ENS (default 1)
  */
@@ -702,6 +770,61 @@ export async function prepareMarketAction(action, payload, durationYears = 1) {
     };
   }
 
+  if (action === "SEND_NATIVE") {
+    try {
+      const { account, publicClient } = buildClients();
+      const net = await publicClient.getChainId();
+      if (net !== SEPOLIA_CHAIN_ID) {
+        throw new Error(`RPC chainId ${net}; expected Sepolia (${SEPOLIA_CHAIN_ID}).`);
+      }
+
+      const { checksummedTo, canonicalAmount, valueWei } =
+        parseSendNativePayload(payload);
+      if (checksummedTo.toLowerCase() === account.address.toLowerCase()) {
+        return {
+          status: "ERROR",
+          reason: "SELF_RECIPIENT",
+          message: "Recipient is the same as the wallet address; refusing send.",
+        };
+      }
+
+      const approvalId = crypto.randomUUID();
+      const expiresAt = Date.now() + PENDING_TTL_MS;
+      const createdAt = Date.now();
+      const canonicalPayload = { to: checksummedTo, amount: canonicalAmount };
+
+      pendingApprovals.set(approvalId, {
+        action,
+        payload: canonicalPayload,
+        expiresAt,
+        createdAt,
+        send: {
+          to: checksummedTo,
+          valueWei,
+        },
+      });
+
+      return {
+        status: "QUOTE_READY",
+        approval_id: approvalId,
+        chainId: SEPOLIA_CHAIN_ID,
+        action: "SEND_NATIVE",
+        to: checksummedTo,
+        amountEth: canonicalAmount,
+        valueWei: valueWei.toString(),
+        expires_at: new Date(expiresAt).toISOString(),
+        note:
+          "Native Sepolia ETH transfer (not mainnet). Show to + amount and ask the user to confirm; then execute_market_action with the same action, payload, and approval_id.",
+      };
+    } catch (e) {
+      return {
+        status: "ERROR",
+        reason: "SEND_PREPARE_FAILED",
+        message: e?.shortMessage ?? e?.message ?? String(e),
+      };
+    }
+  }
+
   return { status: "FAIL", reason: "Unknown action" };
 }
 
@@ -737,8 +860,60 @@ export async function executeMarketAction(action, payload, approvalId) {
   if (action === "BUY_DOMAIN") {
     return executeEnsRegisterFromPending(pending);
   }
+  if (action === "SEND_NATIVE") {
+    return executeSendNativeFromPending(pending);
+  }
 
   return { status: "FAIL", reason: "Unknown action" };
+}
+
+async function executeSendNativeFromPending(pending) {
+  try {
+    const { account, publicClient, walletClient } = buildClients();
+    const net = await publicClient.getChainId();
+    if (net !== SEPOLIA_CHAIN_ID) {
+      throw new Error(`RPC chainId ${net}; expected Sepolia (${SEPOLIA_CHAIN_ID}).`);
+    }
+
+    const to = pending.send.to;
+    const value = pending.send.valueWei;
+    if (to.toLowerCase() === account.address.toLowerCase()) {
+      return {
+        status: "FAIL",
+        reason: "SELF_RECIPIENT",
+        message: "Recipient is the wallet itself.",
+      };
+    }
+
+    const hash = await walletClient.sendTransaction({
+      account,
+      chain: sepolia,
+      to,
+      value,
+    });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") {
+      return {
+        status: "FAIL",
+        reason: "TX_REVERTED",
+        transactionHash: hash,
+        message: "Send transaction reverted on-chain.",
+      };
+    }
+
+    return {
+      status: "SUCCESS",
+      action: "SEND_NATIVE",
+      message: `Sent ${pending.payload.amount} ETH (Sepolia) to ${to}`,
+      transactionHash: hash,
+    };
+  } catch (e) {
+    return {
+      status: "FAIL",
+      reason: "SEND_EXEC_FAILED",
+      detail: e?.shortMessage ?? e?.message ?? String(e),
+    };
+  }
 }
 
 async function executeSwapFromPending(pending) {
