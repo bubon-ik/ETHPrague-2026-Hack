@@ -1,16 +1,16 @@
 const WALLET_PENDING = "wallet.pending";
 
 const TOKENS = {
-  ETH: { symbol: "ETH", name: "Sepolia ETH", usd: 3200, cgId: "ethereum", balance: "0.0", address: "0xfff9976782d46cc05630d1f6ebab18b2324d6b14", decimals: 18 },
+  ETH: { symbol: "ETH", name: "Sepolia ETH", usd: 3200, cgId: "ethereum", balance: "0.0", address: "0xfff9976782d46cc05630d1f6ebab18b2324d6b14", decimals: 18, native: true },
+  WETH: { symbol: "WETH", name: "Wrapped ETH Sepolia", usd: 3200, cgId: "ethereum", balance: "0.0", address: "0xfff9976782d46cc05630d1f6ebab18b2324d6b14", decimals: 18 },
   USDC: { symbol: "USDC", name: "USDC Sepolia", usd: 1, cgId: "usd-coin", balance: "0.0", address: "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238", decimals: 6 },
 };
 
-const MARKET_IDS = Object.values(TOKENS).map((token) => token.cgId).join(",");
+const MARKET_IDS = Array.from(new Set(Object.values(TOKENS).map((token) => token.cgId))).join(",");
 
 const pages = {
   home: document.getElementById("page-home"),
   send: document.getElementById("page-send"),
-  cli: document.getElementById("page-cli"),
   settings: document.getElementById("page-settings"),
   agent: document.getElementById("page-agent"),
   swap: document.getElementById("page-swap"),
@@ -27,10 +27,6 @@ const sendToInput = document.getElementById("send-to");
 const sendAmountInput = document.getElementById("send-amount");
 const sendSubmitBtn = document.getElementById("send-submit");
 const sendStatusEl = document.getElementById("send-status");
-const cliInput = document.getElementById("cli-input");
-const cliRunBtn = document.getElementById("cli-run");
-const cliOutputEl = document.getElementById("cli-output");
-const cliCommandsEl = document.getElementById("cli-commands");
 
 const swapEls = {
   fromAmount: document.getElementById("from-amount"),
@@ -38,6 +34,7 @@ const swapEls = {
   fromSymbol: document.getElementById("from-symbol"),
   toSymbol: document.getElementById("to-symbol"),
   fromBalance: document.getElementById("from-balance"),
+  fromBalanceMax: document.getElementById("from-balance-max"),
   toBalance: document.getElementById("to-balance"),
   swapRate: document.getElementById("swap-rate"),
   swap24h: document.getElementById("swap-24h"),
@@ -60,9 +57,20 @@ const swapState = {
   status: "",
   marketStatus: "market.price: loading",
   marketPrices: {},
-  balances: { ETH: TOKENS.ETH.balance },
+  balances: { ETH: TOKENS.ETH.balance, WETH: TOKENS.WETH.balance, USDC: TOKENS.USDC.balance },
   picker: null,
 };
+
+function isNativeWrapperPair(fromSymbol, toSymbol) {
+  const fromToken = TOKENS[fromSymbol];
+  const toToken = TOKENS[toSymbol];
+  return Boolean(
+    fromToken &&
+    toToken &&
+    fromToken.address.toLowerCase() === toToken.address.toLowerCase() &&
+    fromToken.native !== toToken.native
+  );
+}
 
 const agentSuggestions = [
   "Analyze wallet security",
@@ -279,10 +287,12 @@ async function loadWalletAddress() {
   try {
     const balance = await requestWalletBalance();
     swapState.balances.ETH = formatTokenBalance(balance.tokenBalances?.ETH ?? balance.balanceEth);
+    swapState.balances.WETH = formatTokenBalance(balance.tokenBalances?.WETH);
     swapState.balances.USDC = formatTokenBalance(balance.tokenBalances?.USDC);
     renderSwap();
   } catch {
     swapState.balances.ETH = "0.0";
+    swapState.balances.WETH = "0.0";
     swapState.balances.USDC = "0.0";
     renderSwap();
   }
@@ -325,10 +335,6 @@ function setOutput(el, message) {
 
 function setSendStatus(message) {
   setOutput(sendStatusEl, message);
-}
-
-function setCliOutput(message) {
-  setOutput(cliOutputEl, message);
 }
 
 async function runCli(command) {
@@ -392,53 +398,6 @@ function initSend() {
   });
 }
 
-async function loadCliCommands() {
-  if (!cliCommandsEl) return;
-  try {
-    const response = await fetch("/api/cli/commands");
-    let payload = {};
-    try {
-      payload = await response.json();
-    } catch {
-      payload = {};
-    }
-    if (!response.ok) throw new Error(payload.error || response.statusText);
-    cliCommandsEl.textContent = payload.commands || "no commands";
-  } catch (error) {
-    cliCommandsEl.textContent = `commands: ${error.message || "unavailable"}`;
-  }
-}
-
-function initCli() {
-  if (!cliInput || !cliRunBtn || !cliOutputEl) return;
-  cliInput.addEventListener("input", () => setCliOutput(""));
-  cliInput.addEventListener("keydown", (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      cliRunBtn.click();
-    }
-  });
-  cliRunBtn.addEventListener("click", async () => {
-    const command = cliInput.value.trim();
-    if (!command) {
-      setCliOutput("cli.input: enter a command");
-      return;
-    }
-    cliRunBtn.disabled = true;
-    setCliOutput("cli.run: executing...");
-    try {
-      const output = await runCli(command);
-      setCliOutput(output);
-      await loadWalletAddress();
-    } catch (error) {
-      setCliOutput(`cli.error: ${error.message || "request failed"}`);
-    } finally {
-      cliRunBtn.disabled = false;
-    }
-  });
-  loadCliCommands();
-}
-
 function updateMockOutput() {
   const fromToken = TOKENS[swapState.from];
   const toToken = TOKENS[swapState.to];
@@ -486,7 +445,7 @@ function scheduleLivePrice() {
       if (price.buyAmount) {
         swapState.output = fmt(Number(unitsToAmount(price.buyAmount, toToken.decimals)));
       }
-      swapState.status = "Uniswap.price: Sepolia route ready";
+      swapState.status = `${price.source || "Uniswap.price"}: Sepolia route ready`;
     } catch (error) {
       swapState.status = `Uniswap.price: ${error.message}; using estimate`;
     }
@@ -498,9 +457,12 @@ function openTokenModal(target) {
   if (!swapEls.tokenModal || !swapEls.tokenModalList) return;
   swapState.picker = target;
   const blocked = target === "from" ? swapState.to : swapState.from;
+  const blockedToken = TOKENS[blocked];
   swapEls.tokenModalList.textContent = "";
   Object.values(TOKENS)
     .filter((token) => token.symbol !== blocked)
+    .filter((token) => target !== "to" || !token.native || isNativeWrapperPair(blocked, token.symbol))
+    .filter((token) => token.address.toLowerCase() !== blockedToken.address.toLowerCase() || isNativeWrapperPair(blocked, token.symbol))
     .forEach((token) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -535,7 +497,18 @@ function chooseToken(target, symbol) {
 function switchTokens() {
   const prev = swapState.from;
   swapState.from = swapState.to;
-  swapState.to = prev;
+  swapState.to = TOKENS[prev]?.native ? "WETH" : prev;
+  swapState.status = "";
+  updateMockOutput();
+  renderSwap();
+  scheduleLivePrice();
+}
+
+function fillMaxFromBalance() {
+  const fromToken = TOKENS[swapState.from];
+  const balance = swapState.balances[fromToken.symbol] ?? fromToken.balance;
+  if (!balance || balance === "0.0") return;
+  swapState.amount = cleanAmount(balance);
   swapState.status = "";
   updateMockOutput();
   renderSwap();
@@ -548,12 +521,12 @@ async function submitSwap() {
     renderSwap();
     return;
   }
-  swapState.status = "Uniswap.swap: signing and broadcasting Sepolia transaction";
+  swapState.status = "swap: signing and broadcasting Sepolia transaction";
   renderSwap();
   try {
     const fromToken = TOKENS[swapState.from];
     const toToken = TOKENS[swapState.to];
-    if (fromToken.symbol !== "ETH") {
+    if (!fromToken.native && !isNativeWrapperPair(swapState.from, swapState.to)) {
       const amountUnits = amountToUnits(swapState.amount, fromToken.decimals);
       const approval = await requestTokenApproval(fromToken, amountUnits, "GET");
       if (!approval.approved) {
@@ -565,7 +538,7 @@ async function submitSwap() {
       }
     }
     const result = await requestSwap("execute", TOKENS[swapState.from], TOKENS[swapState.to], swapState.amount, "POST");
-    swapState.status = `Uniswap.swap: onchain ${shortHash(result.onchain?.hash || result.sent)} · ${fmt(Number(swapState.amount))} ${swapState.from} -> ${fmt(Number(unitsToAmount(result.buyAmount, toToken.decimals)))} ${swapState.to}`;
+    swapState.status = `${result.source || "Uniswap.swap"}: onchain ${shortHash(result.onchain?.hash || result.sent)} · ${fmt(Number(swapState.amount))} ${swapState.from} -> ${fmt(Number(unitsToAmount(result.buyAmount, toToken.decimals)))} ${swapState.to}`;
     await loadWalletAddress();
   } catch (error) {
     swapState.status = `Uniswap.swap: ${error.message}`;
@@ -596,6 +569,7 @@ function initSwap() {
   });
   if (swapEls.fromToken) swapEls.fromToken.addEventListener("click", () => openTokenModal("from"));
   if (swapEls.toToken) swapEls.toToken.addEventListener("click", () => openTokenModal("to"));
+  if (swapEls.fromBalanceMax) swapEls.fromBalanceMax.addEventListener("click", fillMaxFromBalance);
   if (swapEls.switchTokens) swapEls.switchTokens.addEventListener("click", switchTokens);
   if (swapEls.submit) swapEls.submit.addEventListener("click", submitSwap);
   if (swapEls.tokenModal) {
@@ -685,6 +659,8 @@ async function requestSwap(endpoint, fromToken, toToken, amount, method = "GET")
     sellToken: fromToken.address,
     buyToken: toToken.address,
     sellAmount: amountToUnits(amount, fromToken.decimals),
+    sellNative: fromToken.native ? "1" : "0",
+    buyNative: toToken.native ? "1" : "0",
   });
   const response = await fetch(`/api/swap/${endpoint}?${params.toString()}`, { method });
   const payload = await response.json();
@@ -728,7 +704,6 @@ function initApp() {
   bindRoutes();
   bindWalletActions();
   initSend();
-  initCli();
   initAgent();
   initSwap();
   startWalletPolling();

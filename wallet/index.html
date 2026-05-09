@@ -35,7 +35,6 @@
           <button type="button" data-route="swap">Swap</button>
           <button type="button" class="secondary" data-route="agent">Agent</button>
           <button type="button" class="secondary" data-route="send">Send</button>
-          <button type="button" class="secondary" data-route="cli">CLI</button>
           <button type="button" class="secondary" data-route="settings">Settings</button>
         </div>
       </section>
@@ -92,34 +91,6 @@
           <button id="send-submit" class="swap-cta" type="button">Send ETH</button>
           <div id="send-status" class="send-output" aria-live="polite"></div>
           <div class="send-note">Uses CLI command: transfer_to &lt;address&gt; &lt;amount&gt; ETH.</div>
-        </div>
-        <button class="back-link" type="button" data-route="home">&#8592; Back</button>
-      </div>
-    </main>
-
-    <main id="page-cli" class="center-main is-hidden">
-      <div class="cli-shell">
-        <div class="cli-head">
-          <div class="cli-sub">Command Runner</div>
-          <h1 class="cli-title">CLI</h1>
-        </div>
-        <div class="cli-card">
-          <label class="cli-label" for="cli-input">Command</label>
-          <textarea
-            id="cli-input"
-            class="cli-input"
-            rows="2"
-            placeholder="transfer_to 0x1234... 0.01 ETH"
-            spellcheck="false"
-          ></textarea>
-          <div class="cli-actions">
-            <button id="cli-run" class="swap-cta" type="button">Run command</button>
-          </div>
-          <div id="cli-output" class="cli-output" aria-live="polite"></div>
-        </div>
-        <div class="cli-list-card">
-          <div class="cli-list-title">Commands</div>
-          <pre id="cli-commands" class="cli-commands">loading...</pre>
         </div>
         <button class="back-link" type="button" data-route="home">&#8592; Back</button>
       </div>
@@ -199,7 +170,7 @@
           <div class="leg">
             <div class="leg-row">
               <span class="leg-label">From</span>
-              <span class="leg-balance">Balance: <strong id="from-balance">0.0</strong></span>
+              <button id="from-balance-max" class="leg-balance balance-max" type="button">Balance: <strong id="from-balance">0.0</strong></button>
             </div>
             <div class="leg-input-row">
               <input id="from-amount" class="amount-input" inputmode="decimal" placeholder="0.0" />

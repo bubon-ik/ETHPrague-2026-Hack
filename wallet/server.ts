@@ -31,8 +31,8 @@ const UNISWAP_SEPOLIA = {
   swapRouter02: "0x3bfa4769fb09eefc5a80d6e87c3b9c650f7ae48e",
 };
 const SEPOLIA_TOKENS = {
-  ETH: {
-    symbol: "ETH",
+  WETH: {
+    symbol: "WETH",
     address: "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",
   },
   USDC: {
@@ -170,6 +170,8 @@ function readSwapParams(url) {
   const buyToken = query.get("buyToken");
   const sellAmount = query.get("sellAmount");
   const taker = query.get("taker") || process.env.SIMBA_TAKER_ADDRESS;
+  const sellNative = query.get("sellNative") === "1";
+  const buyNative = query.get("buyNative") === "1";
 
   if (chainId !== SEPOLIA_CHAIN_ID) {
     return { error: "Only Sepolia swaps are supported." };
@@ -183,7 +185,7 @@ function readSwapParams(url) {
     return { error: "Unsupported Sepolia token pair." };
   }
 
-  return { chainId, sellToken, buyToken, sellAmount, taker, fee: Number(query.get("fee") || UNISWAP_V3_DEFAULT_FEE) };
+  return { chainId, sellToken, buyToken, sellAmount, taker, sellNative, buyNative, fee: Number(query.get("fee") || UNISWAP_V3_DEFAULT_FEE) };
 }
 
 function isUsableAddress(value) {
@@ -242,6 +244,14 @@ function encodeErc20Approve(spender, amount) {
   return `0x${selector}${encodeAddress(spender)}${encodeUint(amount)}`;
 }
 
+function encodeWethDeposit() {
+  return `0x${functionSelector("deposit()")}`;
+}
+
+function encodeWethWithdraw(amount) {
+  return `0x${functionSelector("withdraw(uint256)")}${encodeUint(amount)}`;
+}
+
 function encodeUniswapQuoteExactInputSingle(params) {
   const selector = functionSelector("quoteExactInputSingle((address,address,uint256,uint24,uint160))");
   return `0x${selector}${[
@@ -277,6 +287,16 @@ function findSepoliaToken(address) {
   return Object.values(SEPOLIA_TOKENS).find((token) => token.address.toLowerCase() === normalized);
 }
 
+function isNativeWrapperOperation(params) {
+  const sellToken = findSepoliaToken(params.sellToken);
+  const buyToken = findSepoliaToken(params.buyToken);
+  return Boolean(
+    sellToken?.symbol === "WETH" &&
+    buyToken?.symbol === "WETH" &&
+    params.sellNative !== params.buyNative
+  );
+}
+
 function toRpcQuantity(value) {
   return `0x${BigInt(value).toString(16)}`;
 }
@@ -300,6 +320,32 @@ async function callSepoliaRpc(method, params) {
 }
 
 async function buildUniswapQuoteResponse(params, endpoint) {
+  if (isNativeWrapperOperation(params)) {
+    const unwrap = !params.sellNative && params.buyNative;
+    const response = {
+      chainId: String(SEPOLIA_CHAIN_ID),
+      source: unwrap ? "WETH.unwrap" : "WETH.wrap",
+      sellToken: params.sellToken,
+      buyToken: params.buyToken,
+      sellAmount: params.sellAmount,
+      buyAmount: params.sellAmount,
+      fee: 0,
+    };
+
+    if (endpoint === "quote" || endpoint === "execute") {
+      response.transaction = {
+        chainId: SEPOLIA_CHAIN_ID,
+        from: params.taker,
+        to: SEPOLIA_TOKENS.WETH.address,
+        data: unwrap ? encodeWethWithdraw(params.sellAmount) : encodeWethDeposit(),
+        value: unwrap ? "0x0" : toRpcQuantity(params.sellAmount),
+      };
+      response.minBuyAmount = params.sellAmount;
+    }
+
+    return response;
+  }
+
   const data = encodeUniswapQuoteExactInputSingle({
     tokenIn: params.sellToken,
     tokenOut: params.buyToken,
@@ -334,7 +380,7 @@ async function buildUniswapQuoteResponse(params, endpoint) {
       from: params.taker,
       to: UNISWAP_SEPOLIA.swapRouter02,
       data: txData,
-      value: sellToken?.symbol === "ETH" ? toRpcQuantity(params.sellAmount) : "0x0",
+      value: params.sellNative ? toRpcQuantity(params.sellAmount) : "0x0",
     };
     response.minBuyAmount = amountOutMinimum.toString();
   }
@@ -387,7 +433,7 @@ async function executeUniswap(url) {
     const sellToken = findSepoliaToken(params.sellToken);
     const privKey = hexToBytes(keyHex);
 
-    if (sellToken?.symbol !== "ETH") {
+    if (!params.sellNative && !isNativeWrapperOperation(params)) {
       const approval = await ensureTokenApproval({
         token: sellToken,
         owner: from,
@@ -468,7 +514,7 @@ function readApprovalParams(url) {
   const token = findSepoliaToken(query.get("token"));
   const amount = query.get("amount");
 
-  if (!token || token.symbol === "ETH") {
+  if (!token) {
     return { error: "Approval is only needed for ERC-20 tokens." };
   }
   if (!amount) {
@@ -682,6 +728,10 @@ async function readWalletBalance() {
   }
 
   const balanceWei = await callSepoliaRpc("eth_getBalance", [wallet.address, "latest"]);
+  const wethBalanceRaw = await callSepoliaRpc("eth_call", [{
+    to: SEPOLIA_TOKENS.WETH.address,
+    data: encodeErc20BalanceOf(wallet.address),
+  }, "latest"]);
   const usdcBalanceRaw = await callSepoliaRpc("eth_call", [{
     to: SEPOLIA_TOKENS.USDC.address,
     data: encodeErc20BalanceOf(wallet.address),
@@ -695,6 +745,7 @@ async function readWalletBalance() {
     balanceEth: formatEtherFromWei(balanceWei),
     tokenBalances: {
       ETH: formatEtherFromWei(balanceWei),
+      WETH: formatUnits(wethBalanceRaw, 18),
       USDC: formatUnits(usdcBalanceRaw, 6),
     },
   };
