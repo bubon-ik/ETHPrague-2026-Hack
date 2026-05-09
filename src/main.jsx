@@ -152,8 +152,25 @@ function Shell({ children }) {
   return (
     <>
       <MatrixBackground />
+      <Satellite />
       {children}
     </>
+  );
+}
+
+function Satellite() {
+  return (
+    <div className="satellite" aria-hidden="true">
+      <div className="satellite-orbit">
+        <span className="satellite-pulse" />
+      </div>
+      <div className="satellite-body">
+        <span className="satellite-core" />
+        <span className="satellite-panel panel-left" />
+        <span className="satellite-panel panel-right" />
+        <span className="satellite-antenna" />
+      </div>
+    </div>
   );
 }
 
