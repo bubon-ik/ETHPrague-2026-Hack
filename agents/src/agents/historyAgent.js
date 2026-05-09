@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { syncEncryptedSessionHistoryToSwarm } from './sessionHistorySwarm.js';
 
 const HISTORY_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -11,12 +12,7 @@ const HISTORY_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 export async function archiveSession(logData) {
   console.log(`\n[History Agent]: Archiving session...`);
-  
-  // In a real implementation for a decentralised stack:
-  // You might post this data to Swarm using a postage batch ID
-  // e.g. using @erebos/swarm or simple axios POST to SWARM_NODE_URL
-  
-  // Simulated logic: saving to a local JSON file
+
   const logsDir = path.join(HISTORY_DIR, '..', '..', 'logs');
   if (!fs.existsSync(logsDir)) {
     fs.mkdirSync(logsDir);
@@ -36,6 +32,19 @@ export async function archiveSession(logData) {
 
   currentLogs.push(logData);
   fs.writeFileSync(logFilePath, JSON.stringify(currentLogs, null, 2));
+
+  try {
+    const swarm = await syncEncryptedSessionHistoryToSwarm(currentLogs);
+    if (swarm.skipped) {
+      console.log(`[History Agent]: Swarm sync skipped — ${swarm.reason}`);
+    } else {
+      console.log(`[History Agent]: Encrypted session history synced to Swarm`);
+    }
+  } catch (e) {
+    console.warn(
+      `[History Agent]: Swarm sync failed (local archive is saved): ${e?.message ?? e}`,
+    );
+  }
 
   console.log(`[History Agent]: Session archived successfully at ${logFilePath}`);
   return { status: 'ARCHIVED' };

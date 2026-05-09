@@ -31,3 +31,9 @@ Thumbs.db
 node_modules/
 bun.lock
 bun.lockb
+
+# Secrets and local session data (never commit)
+agents/.env
+wallet/secrets.env
+agents/logs/
+swarm_tests/swarm-kv/examples/.env

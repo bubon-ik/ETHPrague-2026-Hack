@@ -13,6 +13,10 @@ const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
 loadEnv(path.join(CURRENT_DIR, "secrets.env"));
 loadEnv(path.join(CURRENT_DIR, ".env"));
 loadEnv(path.join(CURRENT_DIR, "..", "agents", ".env"));
+/** Fill only unset/empty keys (e.g. BEE_URL / BATCH_ID from swarm-kv examples). */
+loadEnvFillMissing(
+  path.join(CURRENT_DIR, "..", "swarm_tests", "swarm-kv", "examples", ".env"),
+);
 
 const DEVICE_HOST = Bun.env.DEVICE_HOST ?? "10.0.0.1";
 const DEVICE_PORT = Number(Bun.env.DEVICE_PORT ?? 4000);
@@ -65,6 +69,21 @@ function loadEnv(filePath) {
     if (!match) continue;
     const [, key, rawValue] = match;
     if (process.env[key]) continue;
+    process.env[key] = rawValue.replace(/^["']|["']$/g, "");
+  }
+}
+
+function loadEnvFillMissing(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) continue;
+    const [, key, rawValue] = match;
+    const cur = process.env[key];
+    if (cur !== undefined && String(cur).trim() !== "") continue;
     process.env[key] = rawValue.replace(/^["']|["']$/g, "");
   }
 }
