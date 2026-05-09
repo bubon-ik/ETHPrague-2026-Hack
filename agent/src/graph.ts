@@ -1,29 +1,8 @@
-import { StateGraph, Annotation, END, START } from "@langchain/langgraph";
+import { StateGraph, Annotation, START } from "@langchain/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
+import { ToolMessage } from "@langchain/core/messages";
 import { checkENSTool, prepareBuyTool } from "./tools.js";
-// Update your src/graph.ts to include this:
 import { supervisorNode, controlFlow } from "./supervisor.js";
-
-export const graph = new StateGraph(AgentState)
-    .addNode("supervisor", supervisorNode)
-    .addNode("ens_specialist", ensAgentNode)
-    .addNode("execute_tx", signerNode)
-
-    .addEdge(START, "supervisor")
-
-    // The supervisor decides where to go next
-    .addConditionalEdges(
-        "supervisor",
-        controlFlow
-    )
-
-    // After the specialist is done, it always goes back to supervisor
-    // to see if the user has more questions.
-    .addEdge("ens_specialist", "supervisor")
-
-    .compile({
-        interruptBefore: ["execute_tx"],
-    });
 
 // Define the "Memory" of our Agent
 const AgentState = Annotation.Root({
@@ -32,35 +11,68 @@ const AgentState = Annotation.Root({
         default: () => [],
     }),
     txDetails: Annotation<any>(),
+    next: Annotation<string>(),
 });
 
-const model = new ChatOpenAI({ modelName: "gpt-4o", temperature: 0 });
+const model = new ChatOpenAI({ 
+    modelName: "openai/gpt-4o", 
+    maxTokens: 500,
+    configuration: {
+        baseURL: "https://openrouter.ai/api/v1",
+    }
+});
 
-// Supervisor Logic: Decides where to go
-const supervisorNode = async (state: typeof AgentState.State) => {
-    const response = await model.invoke(state.messages);
-    return { messages: [response] };
+const tools = [checkENSTool, prepareBuyTool];
+
+// Custom Tool Execution Node
+const toolNode = async (state: typeof AgentState.State) => {
+    const lastMessage = state.messages[state.messages.length - 1];
+    const results = [];
+    
+    if (lastMessage?.tool_calls) {
+        for (const toolCall of lastMessage.tool_calls) {
+            const tool = tools.find((t) => t.name === toolCall.name);
+            if (tool) {
+                const output = await tool.invoke(toolCall.args);
+                results.push(new ToolMessage({
+                    tool_call_id: toolCall.id,
+                    content: typeof output === "string" ? output : JSON.stringify(output),
+                }));
+            }
+        }
+    }
+    return { messages: results };
 };
 
 // Node to actually execute the lookup
 const ensSpecialistNode = async (state: typeof AgentState.State) => {
-    const toolModel = model.bindTools([checkENSTool, prepareBuyTool]);
+    const toolModel = model.bindTools(tools);
     const response = await toolModel.invoke(state.messages);
     return { messages: [response] };
+};
+
+// Conditional logic to decide if we need to run tools or go back to supervisor
+const shouldContinue = (state: typeof AgentState.State) => {
+    const lastMessage = state.messages[state.messages.length - 1];
+    if (lastMessage?.tool_calls?.length > 0) {
+        return "tools";
+    }
+    return "supervisor";
 };
 
 // Build the Graph
 export const graph = new StateGraph(AgentState)
     .addNode("supervisor", supervisorNode)
     .addNode("ens_specialist", ensSpecialistNode)
-    .addEdge(START, "supervisor")
-    .addEdge("supervisor", "ens_specialist")
-    // BREAKPOINT: The code will stop before 'execute_tx' for safety
+    .addNode("tools", toolNode)
     .addNode("execute_tx", async (state) => {
         console.log("Broadcasting to Blockchain...");
         return { messages: [{ role: "assistant", content: "Transaction Success!" }] };
     })
+    .addEdge(START, "supervisor")
+    .addConditionalEdges("supervisor", controlFlow)
+    .addConditionalEdges("ens_specialist", shouldContinue)
+    .addEdge("tools", "ens_specialist")
     .compile({
-        // This is the magic line that creates the Human-in-the-loop pause
         interruptBefore: ["execute_tx"],
     });

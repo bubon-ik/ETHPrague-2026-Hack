@@ -8,8 +8,12 @@ import { z } from "zod";
  */
 export const supervisorNode = async (state: any) => {
     const model = new ChatOpenAI({
-        modelName: "gpt-4o",
+        modelName: "openai/gpt-4o",
         temperature: 0,
+        maxTokens: 500,
+        configuration: {
+            baseURL: "https://openrouter.ai/api/v1",
+        },
     });
 
     // We define the possible routes the supervisor can take
@@ -25,8 +29,9 @@ export const supervisorNode = async (state: any) => {
     You are the Web3 Registry Supervisor. 
     Your goal is to manage the user's request regarding ENS domains.
     
-    - If the user wants to check availability or buy a domain: Route to 'ENS_SPECIALIST'.
-    - If you have already provided the answer and the user is just saying thanks or goodbye: Route to 'FINISH'.
+    - If the user wants to check availability or buy a domain AND you don't have the answer yet: Route to 'ENS_SPECIALIST'.
+    - If you have already provided the answer (e.g., domain is taken or available) and no further action is needed: Route to 'FINISH'.
+    - If the user is just saying thanks or goodbye: Route to 'FINISH'.
     
     Current conversation history is provided below.
   `);
@@ -35,6 +40,8 @@ export const supervisorNode = async (state: any) => {
         systemPrompt,
         ...state.messages,
     ]);
+
+    console.log(`Supervisor Decision: ${result.next_step} (${result.reasoning})`);
 
     // We return the decision to the LangGraph state
     return {
