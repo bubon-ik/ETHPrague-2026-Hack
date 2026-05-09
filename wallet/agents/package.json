@@ -1,0 +1,27 @@
+{
+  "name": "aimanager",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Otazka/aimanager.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/Otazka/aimanager/issues"
+  },
+  "homepage": "https://github.com/Otazka/aimanager#readme",
+  "dependencies": {
+    "axios": "^1.16.0",
+    "dotenv": "^17.4.2",
+    "openai": "^6.37.0",
+    "viem": "^2.48.11"
+  }
+}
