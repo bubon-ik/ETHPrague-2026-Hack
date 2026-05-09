@@ -7,6 +7,12 @@
 # Embedded applet ELF (copied by Makefile)
 trusted_os/assets/*.elf
 
+# envs
+.env
+*/.env
+*/*/.env
+*/*/*/.env
+
 # Firmware images
 *.imx
 *.bin
