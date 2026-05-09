@@ -630,7 +630,23 @@ function initAgent() {
       return;
     }
 
-    addMessage("assistant", "Simba: got it. Use transfer_to <address> <amount> ETH to execute.");
+    try {
+      addMessage("assistant", "Simba: thinking…");
+      const response = await fetch("/api/agent/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || payload.detail || `HTTP ${response.status}`);
+      }
+      threadEl.querySelector(".chat-message:last-child .chat-bubble")?.parentElement?.remove();
+      addMessage("assistant", payload.reply?.trim() ? payload.reply : "Simba: (no text reply)");
+    } catch (error) {
+      threadEl.querySelector(".chat-message:last-child .chat-bubble")?.parentElement?.remove();
+      addMessage("assistant", `agent.error: ${error.message || "request failed"}`);
+    }
   };
 
   sendEl.addEventListener("click", handleSend);

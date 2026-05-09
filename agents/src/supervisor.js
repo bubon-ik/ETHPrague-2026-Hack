@@ -1,11 +1,13 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import OpenAI from 'openai';
 import { checkDomainAvailability, checkAgentDomain } from './agents/ensAgent.js';
 import { executeTransaction } from './agents/marketAgent.js';
 import { archiveSession } from './agents/historyAgent.js';
 
-const SYSTEM_PROMPT = fs.readFileSync(path.join(process.cwd(), 'PROMPT.md'), 'utf-8');
+const SUPERVISOR_DIR = path.dirname(fileURLToPath(import.meta.url));
+const SYSTEM_PROMPT = fs.readFileSync(path.join(SUPERVISOR_DIR, '..', 'PROMPT.md'), 'utf-8');
 
 const tools = [
   {
@@ -84,11 +86,11 @@ export class SupervisorAgent {
     ];
 
     try {
-      // Wait for the full conversation to finish
       const finalContent = await this.executeConversation(messages, userRequest);
       return finalContent;
     } catch (error) {
       console.error("[Supervisor Error]:", error.message);
+      throw error;
     }
   }
 
@@ -156,5 +158,6 @@ export class SupervisorAgent {
 
     await archiveSession(logData);
     console.log(`\n======================================================\n`);
+    return finalResponse;
   }
 }

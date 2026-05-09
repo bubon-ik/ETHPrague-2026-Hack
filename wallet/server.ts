@@ -11,6 +11,7 @@ const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 loadEnv(path.join(CURRENT_DIR, "secrets.env"));
 loadEnv(path.join(CURRENT_DIR, ".env"));
+loadEnv(path.join(CURRENT_DIR, "..", "agents", ".env"));
 
 const DEVICE_HOST = Bun.env.DEVICE_HOST ?? "10.0.0.1";
 const DEVICE_PORT = Number(Bun.env.DEVICE_PORT ?? 4000);
@@ -460,6 +461,21 @@ function jsonError(message, status = 500, detail) {
   return Response.json(detail ? { error: message, detail } : { error: message }, { status });
 }
 
+/** Lazy-loaded multi-agent supervisor (`/agents`). Depends on `npm install` inside `agents/`. */
+let supervisorAgent = null;
+async function getSupervisorAgent() {
+  if (supervisorAgent) return supervisorAgent;
+  const apiKey = Bun.env.OPENAI_API_KEY;
+  if (!apiKey || apiKey === "your_openai_api_key_here") {
+    throw new Error(
+      "OPENAI_API_KEY not set. Add it to agents/.env or export it in the shell.",
+    );
+  }
+  const mod = await import("../agents/src/supervisor.js");
+  supervisorAgent = new mod.SupervisorAgent(apiKey);
+  return supervisorAgent;
+}
+
 const server = Bun.serve({
   port: PORT,
   hostname: HOST,
@@ -502,6 +518,17 @@ const server = Bun.serve({
         const payload = await req.json().catch(() => ({}));
         const output = await runCliCommand(payload.command);
         return jsonOk({ output });
+      }
+
+      if (url.pathname === "/api/agent/chat" && req.method === "POST") {
+        const payload = await req.json().catch(() => ({}));
+        const message = typeof payload.message === "string" ? payload.message.trim() : "";
+        if (!message) {
+          return jsonError("missing message", 400);
+        }
+        const supervisor = await getSupervisorAgent();
+        const reply = await supervisor.handleRequest(message);
+        return jsonOk({ reply: reply ?? "" });
       }
 
       if (url.pathname === "/api/wallet/address" && req.method === "GET") {

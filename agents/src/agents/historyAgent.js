@@ -1,5 +1,8 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const HISTORY_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * History Agent
@@ -14,7 +17,7 @@ export async function archiveSession(logData) {
   // e.g. using @erebos/swarm or simple axios POST to SWARM_NODE_URL
   
   // Simulated logic: saving to a local JSON file
-  const logsDir = path.join(process.cwd(), 'logs');
+  const logsDir = path.join(HISTORY_DIR, '..', '..', 'logs');
   if (!fs.existsSync(logsDir)) {
     fs.mkdirSync(logsDir);
   }
