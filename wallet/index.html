@@ -36,6 +36,7 @@
           <button type="button" class="secondary" data-route="agent">Agent</button>
           <button type="button" class="secondary" data-route="send">Send</button>
           <button type="button" class="secondary" data-route="cli">CLI</button>
+          <button type="button" class="secondary" data-route="settings">Settings</button>
         </div>
       </section>
       <section class="visual-panel" aria-label="Generated wallet state">
@@ -119,6 +120,49 @@
         <div class="cli-list-card">
           <div class="cli-list-title">Commands</div>
           <pre id="cli-commands" class="cli-commands">loading...</pre>
+        </div>
+        <button class="back-link" type="button" data-route="home">&#8592; Back</button>
+      </div>
+    </main>
+
+    <main id="page-settings" class="center-main is-hidden">
+      <div class="settings-shell">
+        <div class="settings-head">
+          <div class="settings-sub">Access Controls</div>
+          <h1 class="settings-title">Settings</h1>
+        </div>
+        <div class="settings-card">
+          <label class="settings-field">
+            <span class="settings-label">Allowed country (ISO2)</span>
+            <input
+              id="settings-country"
+              class="settings-input"
+              placeholder="CZ"
+              maxlength="2"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <span class="settings-help">Transactions are blocked outside this country.</span>
+          </label>
+          <label class="settings-field">
+            <span class="settings-label">Blacklisted wallets</span>
+            <textarea
+              id="settings-blacklist"
+              class="settings-textarea"
+              rows="5"
+              placeholder="0x..."
+              spellcheck="false"
+            ></textarea>
+            <span class="settings-help">One address per line.</span>
+          </label>
+          <div class="settings-geo">
+            <div class="settings-geo-label">Detected location</div>
+            <div id="settings-geo" class="settings-geo-value">checking...</div>
+          </div>
+          <div class="settings-actions">
+            <button id="settings-refresh" class="swap-cta" type="button">Refresh location</button>
+          </div>
+          <div id="settings-status" class="settings-status" aria-live="polite"></div>
         </div>
         <button class="back-link" type="button" data-route="home">&#8592; Back</button>
       </div>
