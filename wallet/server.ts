@@ -3,12 +3,22 @@
 import { keccak256 } from "ethereum-cryptography/keccak";
 import { secp256k1 } from "ethereum-cryptography/secp256k1";
 import { hexToBytes, toHex } from "ethereum-cryptography/utils";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+loadEnv(path.join(CURRENT_DIR, "secrets.env"));
+loadEnv(path.join(CURRENT_DIR, ".env"));
 
 const DEVICE_HOST = Bun.env.DEVICE_HOST ?? "10.0.0.1";
 const DEVICE_PORT = Number(Bun.env.DEVICE_PORT ?? 4000);
 const HOST = Bun.env.WALLET_HOST ?? "127.0.0.1";
 const PORT = Number(Bun.env.WALLET_PORT ?? 3030);
 const DEBUG = Bun.env.WALLET_DEBUG !== "0";
+const ZEROX_BASE_URL = "https://api.0x.org";
+const COINGECKO_BASE_URL = "https://api.coingecko.com/api/v3";
 
 const assets = {
   "/": {
@@ -24,6 +34,20 @@ const assets = {
     type: "text/javascript; charset=utf-8",
   },
 };
+
+function loadEnv(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) continue;
+    const [, key, rawValue] = match;
+    if (process.env[key]) continue;
+    process.env[key] = rawValue.replace(/^["']|["']$/g, "");
+  }
+}
 
 function log(message) {
   if (!DEBUG) return;
@@ -93,6 +117,108 @@ async function fetchState() {
   return { status: "ready", address };
 }
 
+function readSwapParams(url) {
+  const query = url.searchParams;
+  const chainId = query.get("chainId") || "1";
+  const sellToken = query.get("sellToken");
+  const buyToken = query.get("buyToken");
+  const sellAmount = query.get("sellAmount");
+  const taker = query.get("taker") || process.env.SIMBA_TAKER_ADDRESS;
+
+  if (!sellToken || !buyToken || !sellAmount) {
+    return { error: "Missing sellToken, buyToken, or sellAmount." };
+  }
+
+  if (!taker || /^0x0{40}$/i.test(taker)) {
+    return { error: "Missing SIMBA_TAKER_ADDRESS. Add the generated wallet address to secrets.env." };
+  }
+
+  return { chainId, sellToken, buyToken, sellAmount, taker };
+}
+
+function isUsableAddress(value) {
+  return /^0x[0-9a-fA-F]{40}$/.test(value || "") && !/^0x0{40}$/i.test(value);
+}
+
+async function proxy0x(url, endpoint) {
+  if (!process.env.ZEROX_API_KEY) {
+    return jsonError("Missing ZEROX_API_KEY in secrets.env.", 500);
+  }
+
+  const params = readSwapParams(url);
+  if (params.error) {
+    return jsonError(params.error, 400);
+  }
+
+  const zeroExUrl = new URL(`${ZEROX_BASE_URL}/swap/allowance-holder/${endpoint}`);
+  for (const [key, value] of Object.entries(params)) {
+    zeroExUrl.searchParams.set(key, value);
+  }
+
+  try {
+    const zeroExResponse = await fetch(zeroExUrl, {
+      headers: {
+        "0x-api-key": process.env.ZEROX_API_KEY,
+        "0x-version": "v2",
+        "Content-Type": "application/json",
+      },
+    });
+
+    const payload = await zeroExResponse.json().catch(() => ({}));
+    return jsonOk(payload, zeroExResponse.status);
+  } catch (error) {
+    return jsonError("0x request failed.", 502, error.message);
+  }
+}
+
+async function proxyCoinGeckoPrices(url) {
+  if (!process.env.COINGECKO_API_KEY) {
+    return jsonError("Missing COINGECKO_API_KEY in secrets.env.", 500);
+  }
+
+  const ids = url.searchParams.get("ids");
+  if (!ids) {
+    return jsonError("Missing ids.", 400);
+  }
+
+  const coinGeckoUrl = new URL(`${COINGECKO_BASE_URL}/simple/price`);
+  coinGeckoUrl.searchParams.set("ids", ids);
+  coinGeckoUrl.searchParams.set("vs_currencies", url.searchParams.get("vs_currencies") || "usd");
+  coinGeckoUrl.searchParams.set("include_24hr_change", "true");
+  coinGeckoUrl.searchParams.set("include_last_updated_at", "true");
+
+  try {
+    const coinGeckoResponse = await fetch(coinGeckoUrl, {
+      headers: {
+        "x-cg-demo-api-key": process.env.COINGECKO_API_KEY,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const payload = await coinGeckoResponse.json().catch(() => ({}));
+    return jsonOk(payload, coinGeckoResponse.status);
+  } catch (error) {
+    return jsonError("CoinGecko request failed.", 502, error.message);
+  }
+}
+
+async function readWalletAddress() {
+  try {
+    const state = await fetchState();
+    if (state.status === "ready" && isUsableAddress(state.address)) {
+      return { connected: true, source: "device", address: state.address };
+    }
+  } catch {
+    // Fall through to env fallback.
+  }
+
+  if (isUsableAddress(process.env.SIMBA_TAKER_ADDRESS)) {
+    return { connected: true, source: "env", address: process.env.SIMBA_TAKER_ADDRESS };
+  }
+
+  return { connected: false, source: "none", address: null };
+}
+
 async function callApplet(method, input, options = {}) {
   const redactOutput = options.redactOutput === true;
   log(`bridge -> ${method} (len=${input.length}) ${truncate(input)}`);
@@ -128,12 +254,12 @@ async function callApplet(method, input, options = {}) {
   return output;
 }
 
-function jsonOk(data) {
-  return Response.json(data, { headers: { "Cache-Control": "no-store" } });
+function jsonOk(data, status = 200) {
+  return Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-function jsonError(message, status = 500) {
-  return Response.json({ error: message }, { status });
+function jsonError(message, status = 500, detail) {
+  return Response.json(detail ? { error: message, detail } : { error: message }, { status });
 }
 
 const server = Bun.serve({
@@ -151,6 +277,23 @@ const server = Bun.serve({
     }
 
     try {
+      if (url.pathname === "/api/swap/price" && req.method === "GET") {
+        return proxy0x(url, "price");
+      }
+
+      if (url.pathname === "/api/swap/quote" && req.method === "GET") {
+        return proxy0x(url, "quote");
+      }
+
+      if (url.pathname === "/api/market/prices" && req.method === "GET") {
+        return proxyCoinGeckoPrices(url);
+      }
+
+      if (url.pathname === "/api/wallet/address" && req.method === "GET") {
+        const wallet = await readWalletAddress();
+        return jsonOk(wallet);
+      }
+
       if (url.pathname === "/api/status" && req.method === "GET") {
         const state = await fetchState();
         return jsonOk({ status: state.status ?? "unknown" });

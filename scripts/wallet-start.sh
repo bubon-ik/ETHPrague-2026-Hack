@@ -6,6 +6,11 @@ APPLET_PATH="target/armv7a-none-eabi/release/trusted_applet"
 DEVICE_HOST="${DEVICE_HOST:-10.0.0.1}"
 DEVICE_PORT="${DEVICE_PORT:-4000}"
 
+if [[ ! -d node_modules ]]; then
+  echo "==> install deps"
+  bun install
+fi
+
 probe_once() {
   local out
   out=$(printf '{"Method":"__probe","Input":""}\n' | nc -w 1 "$DEVICE_HOST" "$DEVICE_PORT" 2>/dev/null || true)
