@@ -278,10 +278,12 @@ async function loadWalletAddress() {
 
   try {
     const balance = await requestWalletBalance();
-    swapState.balances.ETH = formatTokenBalance(balance.balanceEth);
+    swapState.balances.ETH = formatTokenBalance(balance.tokenBalances?.ETH ?? balance.balanceEth);
+    swapState.balances.USDC = formatTokenBalance(balance.tokenBalances?.USDC);
     renderSwap();
   } catch {
     swapState.balances.ETH = "0.0";
+    swapState.balances.USDC = "0.0";
     renderSwap();
   }
 }
@@ -546,13 +548,27 @@ async function submitSwap() {
     renderSwap();
     return;
   }
-  swapState.status = "Uniswap.quote: requesting Sepolia transaction data";
+  swapState.status = "Uniswap.swap: signing and broadcasting Sepolia transaction";
   renderSwap();
   try {
-    const quote = await requestSwap("quote", TOKENS[swapState.from], TOKENS[swapState.to], swapState.amount);
-    swapState.status = `Uniswap.quote: tx ready ${fmt(Number(swapState.amount))} ${swapState.from} -> ${fmt(Number(unitsToAmount(quote.buyAmount, TOKENS[swapState.to].decimals)))} ${swapState.to}`;
+    const fromToken = TOKENS[swapState.from];
+    const toToken = TOKENS[swapState.to];
+    if (fromToken.symbol !== "ETH") {
+      const amountUnits = amountToUnits(swapState.amount, fromToken.decimals);
+      const approval = await requestTokenApproval(fromToken, amountUnits, "GET");
+      if (!approval.approved) {
+        swapState.status = `Uniswap.approval: approving ${fromToken.symbol}`;
+        renderSwap();
+        await requestTokenApproval(fromToken, amountUnits, "POST");
+        swapState.status = `Uniswap.approval: ${fromToken.symbol} approved`;
+        renderSwap();
+      }
+    }
+    const result = await requestSwap("execute", TOKENS[swapState.from], TOKENS[swapState.to], swapState.amount, "POST");
+    swapState.status = `Uniswap.swap: onchain ${shortHash(result.onchain?.hash || result.sent)} · ${fmt(Number(swapState.amount))} ${swapState.from} -> ${fmt(Number(unitsToAmount(result.buyAmount, toToken.decimals)))} ${swapState.to}`;
+    await loadWalletAddress();
   } catch (error) {
-    swapState.status = `Uniswap.quote: ${error.message}`;
+    swapState.status = `Uniswap.swap: ${error.message}`;
   }
   renderSwap();
 }
@@ -663,17 +679,33 @@ function initAgent() {
   }
 }
 
-async function requestSwap(endpoint, fromToken, toToken, amount) {
+async function requestSwap(endpoint, fromToken, toToken, amount, method = "GET") {
   const params = new URLSearchParams({
     chainId: "11155111",
     sellToken: fromToken.address,
     buyToken: toToken.address,
     sellAmount: amountToUnits(amount, fromToken.decimals),
   });
-  const response = await fetch(`/api/swap/${endpoint}?${params.toString()}`);
+  const response = await fetch(`/api/swap/${endpoint}?${params.toString()}`, { method });
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || payload.message || "0x quote failed");
+  if (!response.ok) throw new Error(payload.detail || payload.error || payload.message || "Uniswap request failed");
   return payload;
+}
+
+async function requestTokenApproval(token, amountUnits, method) {
+  const params = new URLSearchParams({
+    token: token.address,
+    amount: amountUnits,
+  });
+  const response = await fetch(`/api/token/${method === "GET" ? "approval" : "approve"}?${params.toString()}`, { method });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.detail || payload.error || payload.message || "Approval request failed");
+  return payload;
+}
+
+function shortHash(value) {
+  if (!value) return "pending";
+  return `${value.slice(0, 10)}...${value.slice(-6)}`;
 }
 
 async function requestMarketPrices() {

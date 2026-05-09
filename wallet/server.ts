@@ -2,6 +2,7 @@
 
 import { keccak256 } from "ethereum-cryptography/keccak";
 import { secp256k1 } from "ethereum-cryptography/secp256k1";
+import { ecdsaSign } from "ethereum-cryptography/secp256k1-compat";
 import { hexToBytes, toHex } from "ethereum-cryptography/utils";
 import fs from "node:fs";
 import path from "node:path";
@@ -124,16 +125,23 @@ function toChecksumAddress(address) {
 }
 
 async function fetchState() {
+  const key = await fetchPrivateKey();
+  if (!key) {
+    return { status: "not_initialized" };
+  }
+  const address = deriveAddress(key);
+  return { status: "ready", address };
+}
+
+async function fetchPrivateKey() {
   const rawKey = requireOutput(
     "Wallet.Key",
     await callApplet("Wallet.Key", "", { redactOutput: true }),
   );
   if (rawKey === "not_initialized") {
-    return { status: "not_initialized" };
+    return null;
   }
-  const key = normalizeKeyHex(rawKey);
-  const address = deriveAddress(key);
-  return { status: "ready", address };
+  return normalizeKeyHex(rawKey);
 }
 
 function readSwapParams(url) {
@@ -156,10 +164,6 @@ function readSwapParams(url) {
     return { error: "Unsupported Sepolia token pair." };
   }
 
-  if (!taker || /^0x0{40}$/i.test(taker)) {
-    return { error: "Missing SIMBA_TAKER_ADDRESS. Add the generated wallet address to secrets.env." };
-  }
-
   return { chainId, sellToken, buyToken, sellAmount, taker, fee: Number(query.get("fee") || UNISWAP_V3_DEFAULT_FEE) };
 }
 
@@ -168,15 +172,19 @@ function isUsableAddress(value) {
 }
 
 function formatEtherFromWei(hexWei) {
-  const wei = BigInt(hexWei || "0x0");
-  const base = 10n ** 18n;
-  const whole = wei / base;
-  const fraction = wei % base;
+  return formatUnits(hexWei, 18);
+}
 
-  if (wei === 0n) return "0.0";
+function formatUnits(value, decimals) {
+  const units = BigInt(value || "0x0");
+  const base = 10n ** BigInt(decimals);
+  const whole = units / base;
+  const fraction = units % base;
+
+  if (units === 0n) return "0.0";
   if (fraction === 0n) return whole.toString();
 
-  const fractionText = fraction.toString().padStart(18, "0").replace(/0+$/, "");
+  const fractionText = fraction.toString().padStart(decimals, "0").replace(/0+$/, "");
   return `${whole}.${fractionText}`;
 }
 
@@ -198,6 +206,21 @@ function encodeUint(value) {
 
 function encodeAddress(address) {
   return cleanAddress(address).padStart(64, "0");
+}
+
+function encodeErc20BalanceOf(address) {
+  const selector = functionSelector("balanceOf(address)");
+  return `0x${selector}${encodeAddress(address)}`;
+}
+
+function encodeErc20Allowance(owner, spender) {
+  const selector = functionSelector("allowance(address,address)");
+  return `0x${selector}${encodeAddress(owner)}${encodeAddress(spender)}`;
+}
+
+function encodeErc20Approve(spender, amount) {
+  const selector = functionSelector("approve(address,uint256)");
+  return `0x${selector}${encodeAddress(spender)}${encodeUint(amount)}`;
 }
 
 function encodeUniswapQuoteExactInputSingle(params) {
@@ -239,6 +262,10 @@ function toRpcQuantity(value) {
   return `0x${BigInt(value).toString(16)}`;
 }
 
+function hexQuantityToBigInt(value) {
+  return BigInt(value || "0x0");
+}
+
 async function callSepoliaRpc(method, params) {
   const rpcResponse = await fetch(process.env.SEPOLIA_RPC_URL || DEFAULT_SEPOLIA_RPC_URL, {
     method: "POST",
@@ -253,6 +280,49 @@ async function callSepoliaRpc(method, params) {
   return payload.result;
 }
 
+async function buildUniswapQuoteResponse(params, endpoint) {
+  const data = encodeUniswapQuoteExactInputSingle({
+    tokenIn: params.sellToken,
+    tokenOut: params.buyToken,
+    fee: params.fee,
+    amountIn: params.sellAmount,
+  });
+  const result = await callSepoliaRpc("eth_call", [{ to: UNISWAP_SEPOLIA.quoterV2, data }, "latest"]);
+  const buyAmount = decodeFirstUint256(result);
+  const response = {
+    chainId: String(SEPOLIA_CHAIN_ID),
+    source: "Uniswap V3 Sepolia",
+    sellToken: params.sellToken,
+    buyToken: params.buyToken,
+    sellAmount: params.sellAmount,
+    buyAmount,
+    fee: params.fee,
+  };
+
+  if (endpoint === "quote" || endpoint === "execute") {
+    const amountOutMinimum = (BigInt(buyAmount) * 9950n) / 10000n;
+    const txData = encodeUniswapExactInputSingle({
+      tokenIn: params.sellToken,
+      tokenOut: params.buyToken,
+      fee: params.fee,
+      recipient: params.taker,
+      amountIn: params.sellAmount,
+      amountOutMinimum,
+    });
+    const sellToken = findSepoliaToken(params.sellToken);
+    response.transaction = {
+      chainId: SEPOLIA_CHAIN_ID,
+      from: params.taker,
+      to: UNISWAP_SEPOLIA.swapRouter02,
+      data: txData,
+      value: sellToken?.symbol === "ETH" ? toRpcQuantity(params.sellAmount) : "0x0",
+    };
+    response.minBuyAmount = amountOutMinimum.toString();
+  }
+
+  return response;
+}
+
 async function proxyUniswap(url, endpoint) {
   const params = readSwapParams(url);
   if (params.error) {
@@ -260,49 +330,276 @@ async function proxyUniswap(url, endpoint) {
   }
 
   try {
-    const data = encodeUniswapQuoteExactInputSingle({
-      tokenIn: params.sellToken,
-      tokenOut: params.buyToken,
-      fee: params.fee,
-      amountIn: params.sellAmount,
-    });
-    const result = await callSepoliaRpc("eth_call", [{ to: UNISWAP_SEPOLIA.quoterV2, data }, "latest"]);
-    const buyAmount = decodeFirstUint256(result);
-    const response = {
-      chainId: String(SEPOLIA_CHAIN_ID),
-      source: "Uniswap V3 Sepolia",
-      sellToken: params.sellToken,
-      buyToken: params.buyToken,
-      sellAmount: params.sellAmount,
-      buyAmount,
-      fee: params.fee,
-    };
-
-    if (endpoint === "quote") {
-      const amountOutMinimum = (BigInt(buyAmount) * 9950n) / 10000n;
-      const txData = encodeUniswapExactInputSingle({
-        tokenIn: params.sellToken,
-        tokenOut: params.buyToken,
-        fee: params.fee,
-        recipient: params.taker,
-        amountIn: params.sellAmount,
-        amountOutMinimum,
-      });
-      const sellToken = findSepoliaToken(params.sellToken);
-      response.transaction = {
-        chainId: SEPOLIA_CHAIN_ID,
-        from: params.taker,
-        to: UNISWAP_SEPOLIA.swapRouter02,
-        data: txData,
-        value: sellToken?.symbol === "ETH" ? toRpcQuantity(params.sellAmount) : "0x0",
-      };
-      response.minBuyAmount = amountOutMinimum.toString();
+    if (endpoint === "quote" && !isUsableAddress(params.taker)) {
+      const wallet = await readWalletAddress();
+      if (wallet.connected && isUsableAddress(wallet.address)) {
+        params.taker = wallet.address;
+      }
     }
 
-    return jsonOk(response);
+    if (endpoint === "quote" && !isUsableAddress(params.taker)) {
+      return jsonError("Initialize the wallet before requesting a swap quote.", 400);
+    }
+
+    return jsonOk(await buildUniswapQuoteResponse(params, endpoint));
   } catch (error) {
     return jsonError("Uniswap Sepolia request failed.", 502, error.message);
   }
+}
+
+async function executeUniswap(url) {
+  const params = readSwapParams(url);
+  if (params.error) {
+    return jsonError(params.error, 400);
+  }
+
+  try {
+    const keyHex = await fetchPrivateKey();
+    if (!keyHex) {
+      return jsonError("Initialize the wallet before executing a swap.", 400);
+    }
+
+    const from = deriveAddress(keyHex);
+    params.taker = from;
+
+    const quote = await buildUniswapQuoteResponse(params, "execute");
+    const tx = quote.transaction;
+    const dryRun = url.searchParams.get("dryRun") === "1";
+    const sellToken = findSepoliaToken(params.sellToken);
+    const privKey = hexToBytes(keyHex);
+
+    if (sellToken?.symbol !== "ETH") {
+      const approval = await ensureTokenApproval({
+        token: sellToken,
+        owner: from,
+        spender: UNISWAP_SEPOLIA.swapRouter02,
+        amount: BigInt(params.sellAmount),
+        privKey,
+        dryRun,
+      });
+      if (approval) {
+        quote.approval = approval;
+        if (dryRun && approval.required) {
+          quote.execution = {
+            from,
+            dryRun,
+            approvalRequired: true,
+          };
+          return jsonOk(quote);
+        }
+      }
+    }
+
+    const gasPrice = hexQuantityToBigInt(await callSepoliaRpc("eth_gasPrice", []));
+    const nonce = hexQuantityToBigInt(await callSepoliaRpc("eth_getTransactionCount", [from, "pending"]));
+    const estimatedGas = hexQuantityToBigInt(await callSepoliaRpc("eth_estimateGas", [{
+      from,
+      to: tx.to,
+      data: tx.data,
+      value: tx.value,
+    }]));
+    const gasLimit = (estimatedGas * 120n) / 100n;
+    const rawTx = await signLegacyTransaction({
+      nonce,
+      gasPrice,
+      gasLimit,
+      to: tx.to,
+      value: hexQuantityToBigInt(tx.value),
+      data: tx.data,
+      chainId: BigInt(SEPOLIA_CHAIN_ID),
+      privKey,
+    });
+    const rawTxHex = "0x" + toHex(rawTx);
+    const txHash = "0x" + toHex(keccak256(rawTx));
+
+    if (!dryRun) {
+      const rpcResult = await callSepoliaRpc("eth_sendRawTransaction", [rawTxHex]);
+      const submittedHash = isTxHash(rpcResult) ? rpcResult : txHash;
+      const receipt = await waitForTransactionReceipt(submittedHash);
+      if (!receipt) {
+        throw new Error(`transaction was not mined on Sepolia after submit: ${submittedHash}`);
+      }
+      if (receipt.status !== "0x1") {
+        throw new Error(`transaction reverted on Sepolia: ${submittedHash}`);
+      }
+      quote.sent = submittedHash;
+      quote.onchain = {
+        hash: submittedHash,
+        blockNumber: receipt.blockNumber,
+      };
+    }
+
+    quote.execution = {
+      from,
+      nonce: nonce.toString(),
+      gasPriceWei: gasPrice.toString(),
+      gasLimit: gasLimit.toString(),
+      txHash,
+      dryRun,
+    };
+
+    return jsonOk(quote);
+  } catch (error) {
+    return jsonError("Uniswap Sepolia execution failed.", 502, error.message);
+  }
+}
+
+function readApprovalParams(url) {
+  const query = url.searchParams;
+  const token = findSepoliaToken(query.get("token"));
+  const amount = query.get("amount");
+
+  if (!token || token.symbol === "ETH") {
+    return { error: "Approval is only needed for ERC-20 tokens." };
+  }
+  if (!amount) {
+    return { error: "Missing approval amount." };
+  }
+
+  return { token, amount: BigInt(amount), spender: UNISWAP_SEPOLIA.swapRouter02 };
+}
+
+async function readTokenApproval(url) {
+  const params = readApprovalParams(url);
+  if (params.error) {
+    return jsonError(params.error, 400);
+  }
+
+  try {
+    const wallet = await readWalletAddress();
+    if (!wallet.connected || !isUsableAddress(wallet.address)) {
+      return jsonError("Initialize the wallet before checking approval.", 400);
+    }
+
+    const allowance = await readTokenAllowance(params.token, wallet.address, params.spender);
+    return jsonOk({
+      token: params.token.symbol,
+      owner: wallet.address,
+      spender: params.spender,
+      allowance: allowance.toString(),
+      amount: params.amount.toString(),
+      approved: allowance >= params.amount,
+    });
+  } catch (error) {
+    return jsonError("Approval check failed.", 502, error.message);
+  }
+}
+
+async function approveToken(url) {
+  const params = readApprovalParams(url);
+  if (params.error) {
+    return jsonError(params.error, 400);
+  }
+
+  try {
+    const keyHex = await fetchPrivateKey();
+    if (!keyHex) {
+      return jsonError("Initialize the wallet before approving tokens.", 400);
+    }
+
+    const owner = deriveAddress(keyHex);
+    const approval = await ensureTokenApproval({
+      token: params.token,
+      owner,
+      spender: params.spender,
+      amount: params.amount,
+      privKey: hexToBytes(keyHex),
+      dryRun: false,
+    });
+
+    return jsonOk({
+      token: params.token.symbol,
+      owner,
+      spender: params.spender,
+      amount: params.amount.toString(),
+      approved: true,
+      approval,
+    });
+  } catch (error) {
+    return jsonError("Approval transaction failed.", 502, error.message);
+  }
+}
+
+async function ensureTokenApproval({ token, owner, spender, amount, privKey, dryRun }) {
+  const allowance = await readTokenAllowance(token, owner, spender);
+  if (allowance >= amount) {
+    return null;
+  }
+
+  const gasPrice = hexQuantityToBigInt(await callSepoliaRpc("eth_gasPrice", []));
+  const nonce = hexQuantityToBigInt(await callSepoliaRpc("eth_getTransactionCount", [owner, "pending"]));
+  const data = encodeErc20Approve(spender, amount);
+  const estimatedGas = hexQuantityToBigInt(await callSepoliaRpc("eth_estimateGas", [{
+    from: owner,
+    to: token.address,
+    data,
+    value: "0x0",
+  }]));
+  const gasLimit = (estimatedGas * 120n) / 100n;
+  const rawTx = await signLegacyTransaction({
+    nonce,
+    gasPrice,
+    gasLimit,
+    to: token.address,
+    value: 0n,
+    data,
+    chainId: BigInt(SEPOLIA_CHAIN_ID),
+    privKey,
+  });
+  const rawTxHex = "0x" + toHex(rawTx);
+  const txHash = "0x" + toHex(keccak256(rawTx));
+
+  const approval = {
+    token: token.symbol,
+    spender,
+    amount: amount.toString(),
+    txHash,
+    dryRun,
+    required: true,
+  };
+
+  if (dryRun) {
+    return approval;
+  }
+
+  const rpcResult = await callSepoliaRpc("eth_sendRawTransaction", [rawTxHex]);
+  const submittedHash = isTxHash(rpcResult) ? rpcResult : txHash;
+  const receipt = await waitForTransactionReceipt(submittedHash);
+  if (!receipt) {
+    throw new Error(`approval transaction was not mined on Sepolia: ${submittedHash}`);
+  }
+  if (receipt.status !== "0x1") {
+    throw new Error(`approval transaction reverted on Sepolia: ${submittedHash}`);
+  }
+
+  approval.txHash = submittedHash;
+  approval.blockNumber = receipt.blockNumber;
+  return approval;
+}
+
+async function readTokenAllowance(token, owner, spender) {
+  const allowanceRaw = await callSepoliaRpc("eth_call", [{
+    to: token.address,
+    data: encodeErc20Allowance(owner, spender),
+  }, "latest"]);
+  return BigInt(allowanceRaw || "0x0");
+}
+
+function isTxHash(value) {
+  return /^0x[0-9a-fA-F]{64}$/.test(String(value || ""));
+}
+
+async function waitForTransactionReceipt(hash) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const receipt = await callSepoliaRpc("eth_getTransactionReceipt", [hash]);
+    if (receipt) return receipt;
+    await sleep(2000);
+  }
+  return null;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function proxyCoinGeckoPrices(url) {
@@ -366,6 +663,10 @@ async function readWalletBalance() {
   }
 
   const balanceWei = await callSepoliaRpc("eth_getBalance", [wallet.address, "latest"]);
+  const usdcBalanceRaw = await callSepoliaRpc("eth_call", [{
+    to: SEPOLIA_TOKENS.USDC.address,
+    data: encodeErc20BalanceOf(wallet.address),
+  }, "latest"]);
 
   return {
     ...wallet,
@@ -373,6 +674,10 @@ async function readWalletBalance() {
     chainId: SEPOLIA_CHAIN_ID,
     balanceWei,
     balanceEth: formatEtherFromWei(balanceWei),
+    tokenBalances: {
+      ETH: formatEtherFromWei(balanceWei),
+      USDC: formatUnits(usdcBalanceRaw, 6),
+    },
   };
 }
 
@@ -476,6 +781,98 @@ async function getSupervisorAgent() {
   return supervisorAgent;
 }
 
+async function signLegacyTransaction({ nonce, gasPrice, gasLimit, to, value, data, chainId, privKey }) {
+  const fields = [
+    bigIntToBytes(nonce),
+    bigIntToBytes(gasPrice),
+    bigIntToBytes(gasLimit),
+    hexToBytes(to.slice(2)),
+    bigIntToBytes(value),
+    hexToBytes(String(data || "0x").replace(/^0x/, "")),
+  ];
+
+  const payload = rlpEncode([
+    ...fields,
+    bigIntToBytes(chainId),
+    new Uint8Array([]),
+    new Uint8Array([]),
+  ]);
+  const msgHash = keccak256(payload);
+
+  const { signature, recid } = ecdsaSign(msgHash, privKey);
+  if (signature.length !== 64) {
+    throw new Error("unexpected signature length");
+  }
+  const r = bytesToBigInt(signature.slice(0, 32));
+  const s = bytesToBigInt(signature.slice(32, 64));
+  const v = BigInt(recid) + 35n + 2n * chainId;
+
+  return rlpEncode([
+    ...fields,
+    bigIntToBytes(v),
+    bigIntToBytes(r),
+    bigIntToBytes(s),
+  ]);
+}
+
+function bigIntToBytes(value) {
+  if (value === 0n) return new Uint8Array([]);
+  let hex = value.toString(16);
+  if (hex.length % 2) hex = "0" + hex;
+  return hexToBytes(hex);
+}
+
+function bytesToBigInt(bytes) {
+  if (bytes.length === 0) return 0n;
+  return BigInt("0x" + toHex(bytes));
+}
+
+function rlpEncode(value) {
+  if (Array.isArray(value)) {
+    const encodedItems = value.map((item) => rlpEncode(item));
+    const payload = concatBytes(encodedItems);
+    return concatBytes([encodeLength(payload.length, 0xc0), payload]);
+  }
+
+  if (!(value instanceof Uint8Array)) {
+    throw new Error("rlp encode expects Uint8Array or array");
+  }
+
+  if (value.length === 1 && value[0] < 0x80) {
+    return value;
+  }
+
+  return concatBytes([encodeLength(value.length, 0x80), value]);
+}
+
+function encodeLength(len, offset) {
+  if (len <= 55) {
+    return Uint8Array.of(len + offset);
+  }
+  const lenBytes = intToBytes(len);
+  return concatBytes([
+    Uint8Array.of(offset + 55 + lenBytes.length),
+    lenBytes,
+  ]);
+}
+
+function intToBytes(value) {
+  let hex = value.toString(16);
+  if (hex.length % 2) hex = "0" + hex;
+  return hexToBytes(hex);
+}
+
+function concatBytes(chunks) {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
 const server = Bun.serve({
   port: PORT,
   hostname: HOST,
@@ -500,6 +897,18 @@ const server = Bun.serve({
 
       if (url.pathname === "/api/swap/quote" && req.method === "GET") {
         return proxyUniswap(url, "quote");
+      }
+
+      if (url.pathname === "/api/swap/execute" && req.method === "POST") {
+        return executeUniswap(url);
+      }
+
+      if (url.pathname === "/api/token/approval" && req.method === "GET") {
+        return readTokenApproval(url);
+      }
+
+      if (url.pathname === "/api/token/approve" && req.method === "POST") {
+        return approveToken(url);
       }
 
       if (url.pathname === "/api/market/prices" && req.method === "GET") {
