@@ -4,9 +4,9 @@ const path = require("path");
 const { URL } = require("url");
 
 const ROOT = __dirname;
+const DIST = path.join(ROOT, "dist");
 const PORT = Number(process.env.PORT || 4173);
 const ZEROX_BASE_URL = "https://api.0x.org";
-const PUBLIC_FILES = new Set(["/", "/index.html", "/swap.html", "/send.html", "/agent.html"]);
 
 loadEnv(path.join(ROOT, ".env"));
 
@@ -37,14 +37,35 @@ function sendText(res, status, text) {
   res.end(text);
 }
 
+function contentType(filePath) {
+  const ext = path.extname(filePath);
+  if (ext === ".html") return "text/html; charset=utf-8";
+  if (ext === ".js") return "text/javascript; charset=utf-8";
+  if (ext === ".css") return "text/css; charset=utf-8";
+  if (ext === ".json") return "application/json; charset=utf-8";
+  if (ext === ".svg") return "image/svg+xml";
+  return "application/octet-stream";
+}
+
 function serveStatic(reqUrl, res) {
-  const pathname = reqUrl.pathname === "/" ? "/index.html" : reqUrl.pathname;
-  if (!PUBLIC_FILES.has(pathname)) {
-    sendText(res, 404, "Not found");
+  if (!fs.existsSync(DIST)) {
+    sendText(res, 503, "Build missing. Run npm run build before npm start, or use npm run dev for Vite.");
     return;
   }
 
-  const filePath = path.join(ROOT, pathname);
+  const requestedPath = reqUrl.pathname === "/" ? "/index.html" : reqUrl.pathname;
+  const safePath = path.normalize(requestedPath).replace(/^(\.\.[/\\])+/, "");
+  let filePath = path.join(DIST, safePath);
+
+  if (!filePath.startsWith(DIST)) {
+    sendText(res, 403, "Forbidden");
+    return;
+  }
+
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    filePath = path.join(DIST, "index.html");
+  }
+
   fs.readFile(filePath, (error, data) => {
     if (error) {
       sendText(res, 404, "Not found");
@@ -52,7 +73,7 @@ function serveStatic(reqUrl, res) {
     }
 
     res.writeHead(200, {
-      "Content-Type": "text/html; charset=utf-8",
+      "Content-Type": contentType(filePath),
       "Cache-Control": "no-store"
     });
     res.end(data);

@@ -32,5 +32,6 @@ Thumbs.db
 
 # Node/Bun
 node_modules/
+dist/
 bun.lock
 bun.lockb
