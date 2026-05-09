@@ -125,7 +125,7 @@ export class SupervisorAgent {
           this.actionsTaken.push({ action: functionName, args });
 
           if (functionName === "check_domain") {
-            functionResult = await checkDomainAvailability(args.domain);
+            functionResult = JSON.stringify(await checkDomainAvailability(args.domain));
           } else if (functionName === "check_ens_agent") {
             functionResult = JSON.stringify(await checkAgentDomain(args.ensName));
           } else if (functionName === "execute_market_action") {
