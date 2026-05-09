@@ -5,15 +5,17 @@ import "./styles.css";
 const WALLET_ADDRESS = "0x7A3e...91C2";
 
 const TOKENS = {
-  ETH: { symbol: "ETH", name: "Wrapped Ether", usd: 3200, balance: "2.4815", address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", decimals: 18 },
-  USDC: { symbol: "USDC", name: "USD Coin", usd: 1, balance: "1 240.00", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
-  USDT: { symbol: "USDT", name: "Tether", usd: 1, balance: "980.50", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
-  DAI: { symbol: "DAI", name: "Dai", usd: 1, balance: "412.10", address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", decimals: 18 },
-  WBTC: { symbol: "WBTC", name: "Wrapped BTC", usd: 64000, balance: "0.0182", address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", decimals: 8 },
-  ARB: { symbol: "ARB", name: "Arbitrum", usd: 0.92, balance: "320.00", address: "0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1", decimals: 18 },
-  OP: { symbol: "OP", name: "Optimism", usd: 1.85, balance: "210.00", address: "0x4200000000000000000000000000000000000042", decimals: 18 },
-  MATIC: { symbol: "MATIC", name: "Polygon", usd: 0.78, balance: "1 020.00", address: "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0", decimals: 18 }
+  ETH: { symbol: "ETH", name: "Wrapped Ether", usd: 3200, cgId: "ethereum", balance: "2.4815", address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", decimals: 18 },
+  USDC: { symbol: "USDC", name: "USD Coin", usd: 1, cgId: "usd-coin", balance: "1 240.00", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
+  USDT: { symbol: "USDT", name: "Tether", usd: 1, cgId: "tether", balance: "980.50", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
+  DAI: { symbol: "DAI", name: "Dai", usd: 1, cgId: "dai", balance: "412.10", address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", decimals: 18 },
+  WBTC: { symbol: "WBTC", name: "Wrapped BTC", usd: 64000, cgId: "wrapped-bitcoin", balance: "0.0182", address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", decimals: 8 },
+  ARB: { symbol: "ARB", name: "Arbitrum", usd: 0.92, cgId: "arbitrum", balance: "320.00", address: "0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1", decimals: 18 },
+  OP: { symbol: "OP", name: "Optimism", usd: 1.85, cgId: "optimism", balance: "210.00", address: "0x4200000000000000000000000000000000000042", decimals: 18 },
+  MATIC: { symbol: "MATIC", name: "Polygon", usd: 0.78, cgId: "polygon-ecosystem-token", balance: "1 020.00", address: "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0", decimals: 18 }
 };
+
+const MARKET_IDS = Object.values(TOKENS).map((token) => token.cgId).join(",");
 
 function fmt(n) {
   if (!Number.isFinite(n)) return "0.0";
@@ -272,20 +274,48 @@ function SwapPage({ navigate }) {
   const [to, setTo] = useState("USDC");
   const [amount, setAmount] = useState("");
   const [status, setStatus] = useState("");
+  const [marketStatus, setMarketStatus] = useState("market.price: loading");
+  const [marketPrices, setMarketPrices] = useState({});
   const [picker, setPicker] = useState(null);
 
   const fromToken = TOKENS[from];
   const toToken = TOKENS[to];
+  const fromUsd = marketPrices[fromToken.cgId]?.usd || fromToken.usd;
+  const toUsd = marketPrices[toToken.cgId]?.usd || toToken.usd;
+  const fromChange = marketPrices[fromToken.cgId]?.usd_24h_change;
   const mockOutput = useMemo(() => {
     const raw = parseFloat(amount || "");
     if (!Number.isFinite(raw) || raw <= 0) return "";
-    return fmt((raw * fromToken.usd) / toToken.usd);
-  }, [amount, fromToken.usd, toToken.usd]);
+    return fmt((raw * fromUsd) / toUsd);
+  }, [amount, fromUsd, toUsd]);
   const [output, setOutput] = useState("");
 
   useEffect(() => {
     setOutput(mockOutput);
   }, [mockOutput]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMarketPrices() {
+      try {
+        const prices = await requestMarketPrices();
+        if (cancelled) return;
+        setMarketPrices(prices);
+        setMarketStatus("market.price: CoinGecko live");
+      } catch (error) {
+        if (cancelled) return;
+        setMarketStatus(`market.price: ${error.message}`);
+      }
+    }
+
+    loadMarketPrices();
+    const interval = window.setInterval(loadMarketPrices, 60000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     if (!amount) return undefined;
@@ -341,11 +371,12 @@ function SwapPage({ navigate }) {
             <button className="swap-arrow" type="button" aria-label="Switch tokens" onClick={switchTokens}>↓</button>
             <SwapLeg label="To" token={toToken} amount={output} onPick={() => setPicker("to")} />
             <div className="swap-meta">
-              <div className="swap-meta-row"><span>Rate</span><strong>1 {from} ≈ {fmt(fromToken.usd / toToken.usd)} {to}</strong></div>
+              <div className="swap-meta-row"><span>Rate</span><strong>1 {from} ≈ {fmt(fromUsd / toUsd)} {to}</strong></div>
               <div className="swap-meta-row"><span>Slippage</span><strong>0.5%</strong></div>
-              <div className="swap-meta-row"><span>Network fee</span><strong>~$0.42</strong></div>
+              <div className="swap-meta-row"><span>24h</span><strong>{formatChange(fromChange)}</strong></div>
             </div>
             <button className="swap-cta" type="button" onClick={submitSwap}>Swap tokens</button>
+            <div className="swap-market-status">{marketStatus}</div>
             <div className={`swap-status ${status ? "is-visible" : ""}`}>{status}</div>
           </div>
           <BackLink navigate={navigate} />
@@ -354,6 +385,12 @@ function SwapPage({ navigate }) {
       {picker && <TokenModal target={picker} from={from} to={to} onPick={chooseToken} onClose={() => setPicker(null)} />}
     </Shell>
   );
+}
+
+function formatChange(value) {
+  if (!Number.isFinite(value)) return "loading";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
 }
 
 function SwapLeg({ label, token, amount, editable = false, onAmountChange, onPick }) {
@@ -408,6 +445,14 @@ async function request0x(endpoint, fromToken, toToken, amount) {
   const response = await fetch(`/api/swap/${endpoint}?${params.toString()}`);
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || payload.message || "0x quote failed");
+  return payload;
+}
+
+async function requestMarketPrices() {
+  const params = new URLSearchParams({ ids: MARKET_IDS });
+  const response = await fetch(`/api/market/prices?${params.toString()}`);
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || payload.message || "CoinGecko price failed");
   return payload;
 }
 

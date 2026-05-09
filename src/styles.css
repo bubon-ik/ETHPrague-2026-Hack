@@ -492,15 +492,24 @@ h1,
 }
 
 .agent-response,
-.swap-status {
+.swap-status,
+.swap-market-status {
   min-height: 18px;
   color: #b6eec1;
   font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
   font-size: 12px;
   font-weight: 700;
+}
+
+.agent-response,
+.swap-status {
   opacity: 0;
   transform: translateY(-4px);
   transition: opacity 0.32s ease, transform 0.32s ease;
+}
+
+.swap-market-status {
+  color: rgba(182, 238, 193, 0.72);
 }
 
 .agent-response.is-visible,
