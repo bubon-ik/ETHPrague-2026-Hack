@@ -95,3 +95,24 @@ all of that should be conviniently be modifiable in settings of the website.
 
 
 all of it will be implemeted just in frontend, for speed and visibility
+
+
+
+
+
+
+
+
+
+
+
+
+Add in section /agent normal chat stuff. remove 
+
+Analyze wallet security
+Check token contract
+Generate a safe swap route
+Scan for phishing
+
+
+and make it look like a messanger. we type in and ai will response and probably call cli to perform transaction. you goal it to make this section look and perform as a chat, not like it is now. pressing enter should send request.

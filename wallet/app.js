@@ -74,13 +74,6 @@ const swapState = {
   picker: null,
 };
 
-const agentSuggestions = [
-  "Analyze wallet security",
-  "Check token contract",
-  "Generate a safe swap route",
-  "Scan for phishing",
-];
-
 const SETTINGS_STORAGE_KEY = "simba.wallet.settings";
 const GEO_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_SETTINGS = {
@@ -760,36 +753,63 @@ function initSwap() {
 }
 
 function initAgent() {
-  const promptEl = document.getElementById("agent-prompt");
+  const threadEl = document.getElementById("agent-thread");
+  const inputEl = document.getElementById("agent-input");
   const sendEl = document.getElementById("agent-send");
-  const responseEl = document.getElementById("agent-response");
-  const suggestionsEl = document.getElementById("agent-suggestions");
-  if (!promptEl || !sendEl || !responseEl || !suggestionsEl) return;
+  if (!threadEl || !inputEl || !sendEl) return;
 
-  const setResponse = (text) => {
-    responseEl.textContent = text;
-    responseEl.classList.toggle("is-visible", Boolean(text));
+  const addMessage = (role, text) => {
+    const item = document.createElement("div");
+    item.className = `chat-message ${role}`;
+    const bubble = document.createElement("div");
+    bubble.className = "chat-bubble";
+    bubble.textContent = text;
+    item.appendChild(bubble);
+    threadEl.appendChild(item);
+    threadEl.scrollTop = threadEl.scrollHeight;
   };
 
-  promptEl.addEventListener("input", () => setResponse(""));
-  sendEl.addEventListener("click", () => {
-    const text = promptEl.value.trim();
-    setResponse(text ? "agent.request: queued for API connection" : "agent.input: waiting for a request");
+  const handleSend = async () => {
+    const text = inputEl.value.trim();
+    if (!text) return;
+    addMessage("user", text);
+    inputEl.value = "";
+
+    const commandName = text.split(/\s+/)[0];
+    if (commandName === "transfer_to" || commandName === "commands") {
+      addMessage("assistant", "agent: running command...");
+      try {
+        if (commandName !== "commands") {
+          const addresses = extractAddresses(text);
+          await enforceGuards([currentWalletAddress, ...addresses]);
+        }
+        const output = await runCli(text);
+        addMessage("assistant", output || "cli: ok");
+      } catch (error) {
+        const message = error.message || "request failed";
+        const prefix = message === "wrong country" || message === "blacklisted wallet"
+          ? "blocked"
+          : "error";
+        addMessage("assistant", `cli.${prefix}: ${message}`);
+      }
+      return;
+    }
+
+    addMessage("assistant", "Simba: got it. Use transfer_to <address> <amount> ETH to execute.");
+  };
+
+  sendEl.addEventListener("click", handleSend);
+  inputEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      handleSend();
+    }
   });
 
-  suggestionsEl.textContent = "";
-  agentSuggestions.forEach((item) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "chip";
-    button.textContent = item;
-    button.addEventListener("click", () => {
-      promptEl.value = item;
-      setResponse("");
-      promptEl.focus();
-    });
-    suggestionsEl.appendChild(button);
-  });
+  if (!threadEl.dataset.ready) {
+    addMessage("assistant", "Simba online. Ask me anything or run transfer_to to send ETH.");
+    threadEl.dataset.ready = "true";
+  }
 }
 
 async function request0x(endpoint, fromToken, toToken, amount) {
