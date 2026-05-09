@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
-const WALLET_ADDRESS = "0x7A3e...91C2";
+const WALLET_PENDING = "wallet.pending";
 
 const TOKENS = {
   ETH: { symbol: "ETH", name: "Wrapped Ether", usd: 3200, cgId: "ethereum", balance: "2.4815", address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", decimals: 18 },
@@ -35,6 +35,11 @@ function amountToUnits(value, decimals) {
   const [whole, fraction = ""] = clean.split(".");
   const padded = (fraction + "0".repeat(decimals)).slice(0, decimals);
   return (BigInt(whole || "0") * 10n ** BigInt(decimals) + BigInt(padded || "0")).toString();
+}
+
+function formatWalletAddress(address) {
+  if (!address) return WALLET_PENDING;
+  return address;
 }
 
 function unitsToAmount(value, decimals) {
@@ -177,11 +182,35 @@ function Satellite() {
 }
 
 function HomePage({ navigate }) {
+  const [wallet, setWallet] = useState({ connected: false, address: null, source: "loading" });
+  const walletAddress = formatWalletAddress(wallet.address);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadWalletAddress() {
+      try {
+        const response = await fetch("/api/wallet/address");
+        const payload = await response.json();
+        if (!cancelled) setWallet(payload);
+      } catch {
+        if (!cancelled) setWallet({ connected: false, address: null, source: "offline" });
+      }
+    }
+
+    loadWalletAddress();
+    const interval = window.setInterval(loadWalletAddress, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
   return (
     <Shell>
       <main className="home-main">
         <section className="hero">
-          <div className="kicker"><span className="dot" /> Web3 autonomous security agent</div>
+          <div className="kicker"><span className="dot" /> AI powered satellite wallet</div>
           <h1>Simba<br />Agent</h1>
           <p className="subtitle">A cinematic first screen for an AI-powered crypto agent: dark, sharp, and alive with moving binary code.</p>
           <div className="actions">
@@ -192,14 +221,14 @@ function HomePage({ navigate }) {
         </section>
         <section className="visual-panel" aria-label="Generated wallet state">
           <div className="wallet-shell">
-            <p className="wallet-address">{WALLET_ADDRESS}</p>
+            <p className={`wallet-address ${wallet.connected ? "" : "is-pending"}`}>{walletAddress}</p>
           </div>
         </section>
       </main>
       <aside className="status">
         <div>status: online</div>
         <div>Network: EVM</div>
-        <div>wallet: {WALLET_ADDRESS}</div>
+        <div>wallet: {walletAddress}</div>
         <div>agent.mode: autonomous</div>
       </aside>
     </Shell>
