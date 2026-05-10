@@ -116,3 +116,14 @@ Scan for phishing
 
 
 and make it look like a messanger. we type in and ai will response and probably call cli to perform transaction. you goal it to make this section look and perform as a chat, not like it is now. pressing enter should send request.
+
+
+
+
+
+
+
+
+
+
+fix settings. Right now it does not save allowed country and blacklist wallet and when i send money it should first check my location, if it is not the country that in the settings or if it is address thet is in the settings, then stop execution of send

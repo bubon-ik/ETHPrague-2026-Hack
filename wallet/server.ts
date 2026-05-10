@@ -1057,6 +1057,63 @@ const server = Bun.serve({
         return jsonOk(balance);
       }
 
+      if (url.pathname === "/api/geo/location" && req.method === "GET") {
+        try {
+          let clientIp = req.headers.get("x-forwarded-for")?.split(",")[0].trim();
+          if (!clientIp) {
+            clientIp = req.headers.get("x-real-ip") || req.socket?.remoteAddress || "0.0.0.0";
+          }
+          
+          // Skip geo lookup for localhost
+          if (clientIp === "127.0.0.1" || clientIp === "::1" || clientIp === "localhost") {
+            return jsonOk({ country: "US" });
+          }
+
+          // Try multiple geo services for reliability
+          let country = "";
+          
+          try {
+            const geoResponse = await fetch(`https://ipapi.co/${clientIp}/json/`, { signal: AbortSignal.timeout(3000) });
+            if (geoResponse.ok) {
+              const geoData = await geoResponse.json();
+              country = geoData.country_code || "CZ";
+            }
+          } catch {
+            // Fallback to ip-api.com
+            try {
+              const altResponse = await fetch(`https://ip-api.com/json/${clientIp}?fields=countryCode`, { signal: AbortSignal.timeout(3000) });
+              if (altResponse.ok) {
+                const altData = await altResponse.json();
+                country = altData.countryCode || "CZ";
+              }
+            } catch {
+              // Fallback to freegeoip
+              try {
+                const finalResponse = await fetch(`https://freegeoip.app/json/${clientIp}`, { signal: AbortSignal.timeout(3000) });
+                if (finalResponse.ok) {
+                  const finalData = await finalResponse.json();
+                  country = finalData.country_code || "CZ";
+                }
+              } catch {}
+            }
+          }
+
+          return jsonOk({ country: country || "CZ" });
+        } catch (err) {
+          log(`geo location error: ${err.message}`);
+          return jsonOk({ country: "CZ" });
+        }
+      }
+
+      if (url.pathname.startsWith("/api/cli") && req.method === "POST") {
+        const payload = await req.json().catch(() => ({}));
+        const { command } = payload;
+        if (!command) return jsonError("missing command", 400);
+        
+        const result = await runCliCommand(command);
+        return jsonOk({ output: result });
+      }
+
       if (url.pathname === "/api/status" && req.method === "GET") {
         const state = await fetchState();
         return jsonOk({ status: state.status ?? "unknown" });

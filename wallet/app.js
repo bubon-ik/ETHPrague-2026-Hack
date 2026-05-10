@@ -87,6 +87,73 @@ let marketTimer = 0;
 let currentWalletAddress = null;
 let swapSubmitting = false;
 
+const SETTINGS_KEYS = {
+  ALLOWED_COUNTRY: "wallet.settings.allowedCountry",
+  BLACKLIST: "wallet.settings.blacklist",
+  LOCATION: "wallet.settings.location",
+};
+
+function getSettings() {
+  return {
+    allowedCountry: localStorage.getItem(SETTINGS_KEYS.ALLOWED_COUNTRY) || "",
+    blacklist: localStorage.getItem(SETTINGS_KEYS.BLACKLIST) || "",
+  };
+}
+
+function saveSettings(allowedCountry, blacklist) {
+  localStorage.setItem(SETTINGS_KEYS.ALLOWED_COUNTRY, allowedCountry.trim().toUpperCase());
+  localStorage.setItem(SETTINGS_KEYS.BLACKLIST, blacklist.trim());
+}
+
+function getBlacklist() {
+  const blacklistText = localStorage.getItem(SETTINGS_KEYS.BLACKLIST) || "";
+  return blacklistText
+    .split("\n")
+    .map((line) => normalizeAddress(line.trim()))
+    .filter(Boolean);
+}
+
+async function getCurrentLocation() {
+  try {
+    const response = await fetch("/api/geo/location");
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "geo lookup failed");
+    return String(payload.country || "CZ").trim().toUpperCase() || "CZ";
+  } catch (error) {
+    console.error("location lookup failed:", error);
+    return "CZ";
+  }
+}
+
+async function validateTransferAllowed(toAddress) {
+  const settings = getSettings();
+  if (!settings.allowedCountry && getBlacklist().length === 0) {
+    return { allowed: true };
+  }
+
+  const normalizedTo = normalizeAddress(toAddress);
+  if (!normalizedTo) {
+    return { allowed: false, reason: "send.to: invalid address" };
+  }
+  const blacklist = getBlacklist();
+  if (blacklist.length > 0 && blacklist.some((addr) => addr.toLowerCase() === normalizedTo.toLowerCase())) {
+    return { allowed: false, reason: `recipient ${toAddress} is blacklisted` };
+  }
+
+  if (settings.allowedCountry) {
+    try {
+      const currentLocation = await getCurrentLocation();
+      if (currentLocation.toUpperCase() !== settings.allowedCountry.toUpperCase()) {
+        return { allowed: false, reason: `your location (${currentLocation}) does not match allowed country (${settings.allowedCountry})` };
+      }
+    } catch (error) {
+      return { allowed: false, reason: `could not verify location: ${error.message}` };
+    }
+  }
+
+  return { allowed: true };
+}
+
 function fmt(n) {
   if (!Number.isFinite(n)) return "0.0";
   if (n === 0) return "0.0";
@@ -413,8 +480,14 @@ function initSend() {
 
   sendSubmitBtn.addEventListener("click", async () => {
     sendSubmitBtn.disabled = true;
-    setSendStatus("send.run: executing...");
+    setSendStatus("send.run: validating...");
     try {
+      const to = sendToInput.value.trim();
+      const validation = await validateTransferAllowed(to);
+      if (!validation.allowed) {
+        throw new Error(validation.reason);
+      }
+      setSendStatus("send.run: executing...");
       const command = buildTransferCommand();
       const output = await runCli(command);
       setSendStatus(output);
@@ -770,11 +843,60 @@ async function requestWalletBalance() {
   return payload;
 }
 
+function initSettings() {
+  const countryEl = document.getElementById("settings-country");
+  const blacklistEl = document.getElementById("settings-blacklist");
+  const geoEl = document.getElementById("settings-geo");
+  const refreshBtn = document.getElementById("settings-refresh");
+  const statusEl = document.getElementById("settings-status");
+
+  if (!countryEl || !blacklistEl) return;
+
+  const settings = getSettings();
+  countryEl.value = settings.allowedCountry;
+  blacklistEl.value = settings.blacklist;
+
+  const saveChanges = () => {
+    if (statusEl) statusEl.textContent = "";
+    const country = countryEl.value.trim().toUpperCase();
+    if (country && !/^[A-Z]{2}$/.test(country)) {
+      if (statusEl) statusEl.textContent = "error: country code must be 2 letters (e.g. US, UK, CZ)";
+      return;
+    }
+    const blacklist = blacklistEl.value.trim();
+    saveSettings(country, blacklist);
+    if (statusEl) statusEl.textContent = "settings saved";
+    setTimeout(() => {
+      if (statusEl) statusEl.textContent = "";
+    }, 3000);
+  };
+
+  countryEl.addEventListener("change", saveChanges);
+  blacklistEl.addEventListener("change", saveChanges);
+
+  const loadLocation = async () => {
+    if (geoEl) geoEl.textContent = "checking...";
+    try {
+      const location = await getCurrentLocation();
+      if (geoEl) geoEl.textContent = location || "CZ";
+    } catch (error) {
+      if (geoEl) geoEl.textContent = "CZ";
+    }
+  };
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", loadLocation);
+  }
+
+  loadLocation();
+}
+
 function initApp() {
   initMatrix();
   bindRoutes();
   bindWalletActions();
   initSend();
+  initSettings();
   initAgent();
   initSwap();
   renderGlobalBalances();
