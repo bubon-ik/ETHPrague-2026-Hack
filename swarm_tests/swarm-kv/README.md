@@ -1,6 +1,14 @@
 # swarm-kv
 
-Developer-friendly **key-value storage on Ethereum Swarm**: `put(key, value)` / `get(key)` backed by content-addressed blobs, **feeds** (one mutable pointer per key), and a **JSON index** for listing keys — without wiring Bee primitives yourself.
+Developer-friendly **key-value storage on Ethereum Swarm**: `put(key, value)` / `get(key)` backed by content-addressed blobs, **feeds** (one mutable pointer per key), and a **listable index** for key names — without wiring Bee primitives yourself.
+
+**Note on “manifests” (bounty wording):** Swarm’s ecosystem often describes a **manifest** as a structure that lists or routes to content. Here the **index** is a small **JSON document** (`{ "v": 1, "keys": [...] }`) stored as a chunk and pointed to by a **dedicated index feed** per namespace — same *role* as a manifest-style index (discoverable key list), implemented as JSON-on-Swarm rather than a separate high-level manifest MIME workflow.
+
+## For judges (what to run)
+
+1. **`cd swarm_tests/swarm-kv && npm install && npm run build && npm test`** — proves TypeScript builds and codec/topic unit tests pass (no Bee required).
+2. **Examples (need Bee + postage batch):** `cd examples && npm install`, copy **`examples/.env.example`** → **`.env`**, set `BEE_URL`, `BATCH_ID`, `PRIVATE_KEY`, then **`node basic.mjs`** (types + list + iterate + delete) and optionally **`node chat-history.mjs`** (JSON document pattern).
+3. **App integration** (this monorepo): see **“Used in this repository”** below — encrypted session backup uses **`SwarmKV`** with one key; that is *in addition* to the generic multi-key demo in `basic.mjs`.
 
 ## Judging criteria (how this submission maps)
 
@@ -94,9 +102,9 @@ You supply **one** `batchId`; the library passes it to every `uploadData` / feed
 
 ## Architecture
 
-1. **Per-key feed** — topic from `sha256(namespace + "\0" + key)`.
-2. **Index feed** — one topic per namespace → latest `{ "v": 1, "keys": [...] }`.
-3. **`get`** checks index membership, then resolves the key feed.
+1. **Per-key feed** — topic from `sha256(namespace + "\0" + key)`; each key’s value is the latest chunk reference published on that feed.
+2. **Index feed** — one topic per namespace → latest JSON index `{ "v": 1, "keys": [...] }` (sorted key list for **`keys()`** and membership checks).
+3. **`get`** checks index membership, then resolves the key feed and decodes the value envelope.
 
 ## Used in this repository (wallet + agent app)
 

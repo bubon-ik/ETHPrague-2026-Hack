@@ -203,6 +203,19 @@ flowchart TD
 - USB Armory MK II / GoTEE trusted applet foundation
 - Swarm encrypted session storage
 - Multi-agent Node.js backend
+- **`swarm-kv`** — small Swarm-backed key-value library (`swarm_tests/swarm-kv`, see below)
+
+---
+
+## Swarm key-value library (`swarm_tests/swarm-kv`)
+
+This repo includes **`swarm-kv`**: a developer-facing **`get(key)` / `put(key, value)`** layer on Ethereum Swarm (feeds per key + a listable index). It targets hackathon / bounty criteria: string, JSON, and binary values; **`keys` / `entries` / `delete`**; one postage batch threaded through all uploads; runnable examples and `npm test` without a Bee node for codec tests.
+
+| Read this | Why |
+|-----------|-----|
+| **[`swarm_tests/swarm-kv/README.md`](swarm_tests/swarm-kv/README.md)** | Full API, quickstart, architecture, judging rubric mapping, and how the **wallet** uses the library vs. the generic examples. |
+
+**Wallet integration (encrypted memory, not the generic KV demo):** after each agent turn, `agents` writes `agents/logs/session_history.json`, then **`sessionHistorySwarm.js`** encrypts the full JSON and **`put`s** a single key (`session_history`, namespace `wallet-agent-session`) via the same `SwarmKV` class. See the table in the swarm-kv README.
 
 ---
 

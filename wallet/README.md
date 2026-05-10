@@ -44,6 +44,10 @@ Commands are listed in wallet/commands.md for the AI prompt.
 - Wallet.Rotate
 - Wallet.Key
 
+## Agent session backup on Swarm (optional)
+
+The wallet server loads **`agents/.env`** and can merge missing Bee keys from **`swarm_tests/swarm-kv/examples/.env`**. After each completed chat, the **History Agent** updates local logs and may **`put`** encrypted session history to Swarm via **`SwarmKV`** (see **`agents/src/agents/sessionHistorySwarm.js`** and the integration table in **`swarm_tests/swarm-kv/README.md`**). Configure **`SESSION_HISTORY_ENCRYPTION_SECRET`** (≥ 8 chars) plus Bee URL, batch id, and feed signing key for sync to run.
+
 ## Notes
 
 - The private key lives only in device memory. A reboot clears it.
