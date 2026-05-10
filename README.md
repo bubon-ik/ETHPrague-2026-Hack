@@ -240,7 +240,7 @@ flowchart TD
 - Sepolia RPC
 - Uniswap V3 Sepolia
 - KMS Space Computer / satellite-backed signing flow
-- USB Armory MK II / GoTEE trusted applet foundation
+- USB Armory MK II / Raspberry Pi
 - Swarm encrypted session storage
 - Multi-agent Node.js backend
 - **`swarm-kv`** — small Swarm-backed key-value library (`swarm_tests/swarm-kv`, see below)
