@@ -1,8 +1,8 @@
-# Simba Agent
+# Jimmy Agent
 
 **Satellite-backed AI wallet with decentralized memory on Swarm.**
 
-Simba Agent is a local-first autonomous Web3 wallet where transaction intent is created in the browser, analyzed by an AI security agent, signed through a KSM Space Computer / satellite-backed signing environment, and archived as encrypted agent memory on Swarm.
+Jimmy Agent is a local-first autonomous Web3 wallet where transaction intent is created in the browser, analyzed by an AI security agent, signed through a KMS Space Computer / satellite-backed signing environment, and archived as encrypted agent memory on Swarm.
 
 The core idea is simple:
 
@@ -33,7 +33,7 @@ For autonomous Web3 agents to become useful, they need a safer signing model.
 
 ## Solution
 
-Simba Agent separates wallet execution into three trust layers:
+Jimmy Agent separates wallet execution into three trust layers:
 
 1. **Local-first wallet UI**  
    The user creates transaction intent locally through a localhost web interface.
@@ -42,7 +42,7 @@ Simba Agent separates wallet execution into three trust layers:
    The agent interprets the user's intent, explains actions, and helps prepare safer transactions.
 
 3. **Satellite-backed signer**  
-   Transactions are signed through a KSM Space Computer / satellite-backed signing environment instead of a normal browser wallet or hot backend key.
+   Transactions are signed through a KMS Space Computer / satellite-backed signing environment instead of a normal browser wallet or hot backend key.
 
 4. **Swarm memory layer**  
    Agent session history and security context can be encrypted and stored on Swarm as decentralized memory and audit history.
@@ -55,13 +55,13 @@ This creates a wallet where the agent helps, but does not custody funds.
 
 Traditional server-side signing concentrates risk in a hot backend key. If the backend, cloud secrets, CI/CD pipeline, or deployment environment is compromised, an attacker may be able to sign arbitrary transactions.
 
-Simba moves the signing authority out of the normal web attack surface.
+Jimmy moves the signing authority out of the normal web attack surface.
 
 The browser does not own the private key.  
 The backend does not become the custodian.  
 The AI agent does not directly control funds.
 
-Instead, the transaction is signed through a satellite-backed KSM Space Computer environment.
+Instead, the transaction is signed through a satellite-backed KMS Space Computer environment.
 
 This changes the threat model:
 
@@ -78,7 +78,7 @@ This changes the threat model:
 
 ## Why Localhost?
 
-Simba is local-first by design.
+Jimmy is local-first by design.
 
 For a normal app, deployment is convenience.  
 For a wallet, deployment is part of the attack surface.
@@ -108,7 +108,7 @@ Web3 transactions are hard to understand:
 - wrap / unwrap flows
 - suspicious transaction patterns
 
-Simba Agent helps users understand and prepare actions in human language.
+Jimmy Agent helps users understand and prepare actions in human language.
 
 Example:
 
@@ -128,7 +128,7 @@ The final signature still happens in the satellite-backed signing layer.
 
 Autonomous agents need memory.
 
-Most AI wallet demos are stateless: the agent responds, forgets, and loses context. Simba uses Swarm as decentralized storage for encrypted agent session history.
+Most AI wallet demos are stateless: the agent responds, forgets, and loses context. Jimmy uses Swarm as decentralized storage for encrypted agent session history.
 
 Swarm can be used for:
 
@@ -139,7 +139,7 @@ Swarm can be used for:
 - session restoration
 - decentralized logs of agent decisions
 
-This makes Simba a stateful Web3 agent rather than a one-off chat interface.
+This makes Jimmy a stateful Web3 agent rather than a one-off chat interface.
 
 > Satellite signing gives the wallet a secure hand.  
 > The AI agent gives it reasoning.  
@@ -157,7 +157,7 @@ The demo shows a complete local-first wallet flow:
 4. Swap USDC to WETH.
 5. Unwrap WETH to native ETH.
 6. Send ETH to another address.
-7. Ask Simba Agent to explain or prepare an action.
+7. Ask Jimmy Agent to explain or prepare an action.
 8. Archive encrypted agent session history to Swarm.
 
 ---
@@ -167,9 +167,9 @@ The demo shows a complete local-first wallet flow:
 ```mermaid
 flowchart TD
     User[User] --> UI[Localhost Wallet UI]
-    UI --> Agent[Simba AI Security Agent]
+    UI --> Agent[Jimmy AI Security Agent]
     Agent --> Builder[Transaction Builder / Policy Layer]
-    Builder --> Signer[KSM Space Computer / Satellite-backed Signer]
+    Builder --> Signer[KMS Space Computer / Satellite-backed Signer]
     Signer --> Chain[Sepolia / Ethereum]
     Agent --> Swarm[Encrypted Agent Memory on Swarm]
     Chain --> UI
@@ -199,7 +199,7 @@ flowchart TD
 - Bun local wallet server
 - Sepolia RPC
 - Uniswap V3 Sepolia
-- KSM Space Computer / satellite-backed signing flow
+- KMS Space Computer / satellite-backed signing flow
 - USB Armory MK II / GoTEE trusted applet foundation
 - Swarm encrypted session storage
 - Multi-agent Node.js backend
@@ -239,7 +239,7 @@ The app is intentionally local-first. The wallet UI is not deployed as a public 
 
 ## Security Model
 
-Simba Agent is designed around separation of responsibility:
+Jimmy Agent is designed around separation of responsibility:
 
 | Layer | Responsibility |
 |---|---|
@@ -257,13 +257,13 @@ The backend does not act as a traditional hot wallet custodian.
 
 ## Hackathon Summary
 
-Simba Agent is a satellite-backed autonomous wallet with decentralized memory.
+Jimmy Agent is a satellite-backed autonomous wallet with decentralized memory.
 
 It combines:
 
 - AI-assisted transaction reasoning
 - local-first wallet UX
-- satellite-backed signing through KSM Space Computer
+- satellite-backed signing through KMS Space Computer
 - encrypted Swarm memory for agent history
 - real onchain Sepolia execution
 
