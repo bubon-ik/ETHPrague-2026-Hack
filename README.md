@@ -166,13 +166,53 @@ The demo shows a complete local-first wallet flow:
 
 ```mermaid
 flowchart TD
-    User[User] --> UI[Localhost Wallet UI]
-    UI --> Agent[Jimmy AI Security Agent]
-    Agent --> Builder[Transaction Builder / Policy Layer]
-    Builder --> Signer[KMS Space Computer / Satellite-backed Signer]
-    Signer --> Chain[Sepolia / Ethereum]
-    Agent --> Swarm[Encrypted Agent Memory on Swarm]
-    Chain --> UI
+    subgraph Localhost["localhost only"]
+        User["User<br/>Browser intent"]
+        UI["Localhost wallet UI<br/>127.0.0.1:3030 - no public deploy"]
+        Supervisor["Supervisor AI Agent<br/>Orchestrates - policy - explains"]
+
+        User --> UI
+        UI --> User
+        UI --> Supervisor
+        Supervisor --> UI
+    end
+
+    ENS["ENSAgent<br/>Name resolution"]
+    Market["MarketAgent<br/>Swap - price - routing"]
+    History["HistoryAgent<br/>Session - audit log"]
+    Builder["Transaction builder<br/>Intent -> structured tx data"]
+
+    subgraph Satellite["satellite trust boundary"]
+        Signer["KSM Space Computer - Signer<br/>Private key isolated - signs approved tx"]
+    end
+
+    Chain["Sepolia / Ethereum"]
+    Swarm["Swarm memory<br/>Encrypted audit history"]
+
+    Supervisor --> ENS
+    Supervisor <--> Market
+    Supervisor --> History
+    Market --> Builder
+    Builder --> Signer
+    Signer --> Chain
+    History -. receipt .-> Swarm
+    Chain -. receipt .-> UI
+
+    classDef local fill:#e0f7ef,stroke:#2b8a6e,color:#064e3b;
+    classDef agent fill:#ece9ff,stroke:#6d5bd0,color:#2f248f;
+    classDef worker fill:#e8f3ff,stroke:#3b82c4,color:#064b8a;
+    classDef builder fill:#fff0e8,stroke:#c45a3b,color:#8a2a12;
+    classDef signer fill:#fff3d8,stroke:#b9822c,color:#7a4300;
+    classDef chain fill:#edf8df,stroke:#6ca34f,color:#255b15;
+    classDef memory fill:#e5faf3,stroke:#3c9b7c,color:#075c45;
+
+    class User,UI local;
+    class Supervisor agent;
+    class ENS,Market,History worker;
+    class Builder builder;
+    class Signer signer;
+    class Chain chain;
+    class Swarm memory;
 ```
 
 ---

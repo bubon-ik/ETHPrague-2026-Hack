@@ -81,8 +81,11 @@ const agentSuggestions = [
 
 let walletTimer = 0;
 let swapPriceTimer = 0;
+let swapPriceRequestId = 0;
+let swapPriceController = null;
 let marketTimer = 0;
 let currentWalletAddress = null;
+let swapSubmitting = false;
 
 function fmt(n) {
   if (!Number.isFinite(n)) return "0.0";
@@ -427,13 +430,17 @@ function initSend() {
 function updateMockOutput() {
   const fromToken = TOKENS[swapState.from];
   const toToken = TOKENS[swapState.to];
-  const fromUsd = swapState.marketPrices[fromToken.cgId]?.usd ?? fromToken.usd;
-  const toUsd = swapState.marketPrices[toToken.cgId]?.usd ?? toToken.usd;
   const raw = parseFloat(swapState.amount || "");
   if (!Number.isFinite(raw) || raw <= 0) {
     swapState.output = "";
     return;
   }
+  if (isNativeWrapperPair(fromToken.symbol, toToken.symbol)) {
+    swapState.output = fmt(raw);
+    return;
+  }
+  const fromUsd = swapState.marketPrices[fromToken.cgId]?.usd ?? fromToken.usd;
+  const toUsd = swapState.marketPrices[toToken.cgId]?.usd ?? toToken.usd;
   swapState.output = fmt((raw * fromUsd) / toUsd);
 }
 
@@ -461,22 +468,44 @@ function renderSwap() {
 
 function scheduleLivePrice() {
   if (swapPriceTimer) window.clearTimeout(swapPriceTimer);
+  if (swapPriceController) swapPriceController.abort();
+  const requestId = ++swapPriceRequestId;
   if (!swapState.amount) return;
   const amount = swapState.amount;
+  const fromSymbol = swapState.from;
+  const toSymbol = swapState.to;
   const fromToken = TOKENS[swapState.from];
   const toToken = TOKENS[swapState.to];
+
+  if (isNativeWrapperPair(fromSymbol, toSymbol)) {
+    swapState.status = `${fromSymbol === "WETH" ? "WETH.unwrap" : "WETH.wrap"}: 1:1 route ready`;
+    renderSwap();
+    return;
+  }
+
+  swapState.status = "market.price: instant estimate; checking Sepolia route";
+  renderSwap();
+
+  const applyIfCurrent = () => (
+    requestId === swapPriceRequestId &&
+    amount === swapState.amount &&
+    fromSymbol === swapState.from &&
+    toSymbol === swapState.to
+  );
+
+  swapPriceController = new AbortController();
   swapPriceTimer = window.setTimeout(async () => {
     try {
-      const price = await requestSwap("price", fromToken, toToken, amount);
-      if (price.buyAmount) {
-        swapState.output = fmt(Number(unitsToAmount(price.buyAmount, toToken.decimals)));
-      }
+      const price = await requestSwap("price", fromToken, toToken, amount, "GET", { signal: swapPriceController.signal });
+      if (!applyIfCurrent()) return;
       swapState.status = `${price.source || "Uniswap.price"}: Sepolia route ready`;
     } catch (error) {
+      if (error.name === "AbortError") return;
+      if (!applyIfCurrent()) return;
       swapState.status = `Uniswap.price: ${error.message}; using estimate`;
     }
     renderSwap();
-  }, 450);
+  }, 120);
 }
 
 function openTokenModal(target) {
@@ -542,11 +571,14 @@ function fillMaxFromBalance() {
 }
 
 async function submitSwap() {
+  if (swapSubmitting) return;
   if (!swapState.amount) {
     swapState.status = "swap.input: enter an amount to continue";
     renderSwap();
     return;
   }
+  swapSubmitting = true;
+  if (swapEls.submit) swapEls.submit.disabled = true;
   swapState.status = "swap: signing and broadcasting Sepolia transaction";
   renderSwap();
   try {
@@ -568,6 +600,9 @@ async function submitSwap() {
     await loadWalletAddress();
   } catch (error) {
     swapState.status = `Uniswap.swap: ${error.message}`;
+  } finally {
+    swapSubmitting = false;
+    if (swapEls.submit) swapEls.submit.disabled = false;
   }
   renderSwap();
 }
@@ -689,7 +724,7 @@ function initAgent() {
   }
 }
 
-async function requestSwap(endpoint, fromToken, toToken, amount, method = "GET") {
+async function requestSwap(endpoint, fromToken, toToken, amount, method = "GET", options = {}) {
   const params = new URLSearchParams({
     chainId: "11155111",
     sellToken: fromToken.address,
@@ -698,7 +733,7 @@ async function requestSwap(endpoint, fromToken, toToken, amount, method = "GET")
     sellNative: fromToken.native ? "1" : "0",
     buyNative: toToken.native ? "1" : "0",
   });
-  const response = await fetch(`/api/swap/${endpoint}?${params.toString()}`, { method });
+  const response = await fetch(`/api/swap/${endpoint}?${params.toString()}`, { method, signal: options.signal });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.detail || payload.error || payload.message || "Uniswap request failed");
   return payload;

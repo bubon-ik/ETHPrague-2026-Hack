@@ -43,6 +43,7 @@ const SEPOLIA_TOKENS = {
 const UNISWAP_V3_DEFAULT_FEE = 10000;
 const CLI_PATH = path.join(CURRENT_DIR, "cli.ts");
 const COMMANDS_PATH = path.join(CURRENT_DIR, "commands.md");
+const inFlightSwapExecutions = new Set();
 
 const assets = {
   "/": {
@@ -297,6 +298,17 @@ function isNativeWrapperOperation(params) {
   );
 }
 
+function swapExecutionKey({ params, from }) {
+  return [
+    from.toLowerCase(),
+    params.sellToken.toLowerCase(),
+    params.buyToken.toLowerCase(),
+    params.sellAmount,
+    params.sellNative ? "native-in" : "erc20-in",
+    params.buyNative ? "native-out" : "erc20-out",
+  ].join(":");
+}
+
 function toRpcQuantity(value) {
   return `0x${BigInt(value).toString(16)}`;
 }
@@ -426,84 +438,93 @@ async function executeUniswap(url) {
 
     const from = deriveAddress(keyHex);
     params.taker = from;
+    const executionKey = swapExecutionKey({ params, from });
+    if (inFlightSwapExecutions.has(executionKey)) {
+      return jsonError("Swap is already in progress. Wait for the current transaction to finish.", 409);
+    }
+    inFlightSwapExecutions.add(executionKey);
 
-    const quote = await buildUniswapQuoteResponse(params, "execute");
-    const tx = quote.transaction;
-    const dryRun = url.searchParams.get("dryRun") === "1";
-    const sellToken = findSepoliaToken(params.sellToken);
-    const privKey = hexToBytes(keyHex);
+    try {
+      const quote = await buildUniswapQuoteResponse(params, "execute");
+      const tx = quote.transaction;
+      const dryRun = url.searchParams.get("dryRun") === "1";
+      const sellToken = findSepoliaToken(params.sellToken);
+      const privKey = hexToBytes(keyHex);
 
-    if (!params.sellNative && !isNativeWrapperOperation(params)) {
-      const approval = await ensureTokenApproval({
-        token: sellToken,
-        owner: from,
-        spender: UNISWAP_SEPOLIA.swapRouter02,
-        amount: BigInt(params.sellAmount),
-        privKey,
-        dryRun,
-      });
-      if (approval) {
-        quote.approval = approval;
-        if (dryRun && approval.required) {
-          quote.execution = {
-            from,
-            dryRun,
-            approvalRequired: true,
-          };
-          return jsonOk(quote);
+      if (!params.sellNative && !isNativeWrapperOperation(params)) {
+        const approval = await ensureTokenApproval({
+          token: sellToken,
+          owner: from,
+          spender: UNISWAP_SEPOLIA.swapRouter02,
+          amount: BigInt(params.sellAmount),
+          privKey,
+          dryRun,
+        });
+        if (approval) {
+          quote.approval = approval;
+          if (dryRun && approval.required) {
+            quote.execution = {
+              from,
+              dryRun,
+              approvalRequired: true,
+            };
+            return jsonOk(quote);
+          }
         }
       }
-    }
 
-    const gasPrice = hexQuantityToBigInt(await callSepoliaRpc("eth_gasPrice", []));
-    const nonce = hexQuantityToBigInt(await callSepoliaRpc("eth_getTransactionCount", [from, "pending"]));
-    const estimatedGas = hexQuantityToBigInt(await callSepoliaRpc("eth_estimateGas", [{
-      from,
-      to: tx.to,
-      data: tx.data,
-      value: tx.value,
-    }]));
-    const gasLimit = (estimatedGas * 120n) / 100n;
-    const rawTx = await signLegacyTransaction({
-      nonce,
-      gasPrice,
-      gasLimit,
-      to: tx.to,
-      value: hexQuantityToBigInt(tx.value),
-      data: tx.data,
-      chainId: BigInt(SEPOLIA_CHAIN_ID),
-      privKey,
-    });
-    const rawTxHex = "0x" + toHex(rawTx);
-    const txHash = "0x" + toHex(keccak256(rawTx));
+      const gasPrice = hexQuantityToBigInt(await callSepoliaRpc("eth_gasPrice", []));
+      const nonce = hexQuantityToBigInt(await callSepoliaRpc("eth_getTransactionCount", [from, "pending"]));
+      const estimatedGas = hexQuantityToBigInt(await callSepoliaRpc("eth_estimateGas", [{
+        from,
+        to: tx.to,
+        data: tx.data,
+        value: tx.value,
+      }]));
+      const gasLimit = (estimatedGas * 120n) / 100n;
+      const rawTx = await signLegacyTransaction({
+        nonce,
+        gasPrice,
+        gasLimit,
+        to: tx.to,
+        value: hexQuantityToBigInt(tx.value),
+        data: tx.data,
+        chainId: BigInt(SEPOLIA_CHAIN_ID),
+        privKey,
+      });
+      const rawTxHex = "0x" + toHex(rawTx);
+      const txHash = "0x" + toHex(keccak256(rawTx));
 
-    if (!dryRun) {
-      const rpcResult = await callSepoliaRpc("eth_sendRawTransaction", [rawTxHex]);
-      const submittedHash = isTxHash(rpcResult) ? rpcResult : txHash;
-      const receipt = await waitForTransactionReceipt(submittedHash);
-      if (!receipt) {
-        throw new Error(`transaction was not mined on Sepolia after submit: ${submittedHash}`);
+      if (!dryRun) {
+        const rpcResult = await callSepoliaRpc("eth_sendRawTransaction", [rawTxHex]);
+        const submittedHash = isTxHash(rpcResult) ? rpcResult : txHash;
+        const receipt = await waitForTransactionReceipt(submittedHash);
+        if (!receipt) {
+          throw new Error(`transaction was not mined on Sepolia after submit: ${submittedHash}`);
+        }
+        if (receipt.status !== "0x1") {
+          throw new Error(`transaction reverted on Sepolia: ${submittedHash}`);
+        }
+        quote.sent = submittedHash;
+        quote.onchain = {
+          hash: submittedHash,
+          blockNumber: receipt.blockNumber,
+        };
       }
-      if (receipt.status !== "0x1") {
-        throw new Error(`transaction reverted on Sepolia: ${submittedHash}`);
-      }
-      quote.sent = submittedHash;
-      quote.onchain = {
-        hash: submittedHash,
-        blockNumber: receipt.blockNumber,
+
+      quote.execution = {
+        from,
+        nonce: nonce.toString(),
+        gasPriceWei: gasPrice.toString(),
+        gasLimit: gasLimit.toString(),
+        txHash,
+        dryRun,
       };
+
+      return jsonOk(quote);
+    } finally {
+      inFlightSwapExecutions.delete(executionKey);
     }
-
-    quote.execution = {
-      from,
-      nonce: nonce.toString(),
-      gasPriceWei: gasPrice.toString(),
-      gasLimit: gasLimit.toString(),
-      txHash,
-      dryRun,
-    };
-
-    return jsonOk(quote);
   } catch (error) {
     return jsonError("Uniswap Sepolia execution failed.", 502, error.message);
   }
