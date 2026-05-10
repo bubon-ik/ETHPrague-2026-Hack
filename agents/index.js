@@ -4,6 +4,7 @@ import {
   executeLatestPendingIfConfirmed,
   formatExecuteResultForChat,
 } from './src/agents/marketAgent.js';
+import { archiveSession } from './src/agents/historyAgent.js';
 import { SupervisorAgent } from './src/supervisor.js';
 
 dotenv.config();
@@ -50,6 +51,17 @@ async function main() {
       if (shortcut != null) {
         reply = formatExecuteResultForChat(shortcut);
         console.log(`\n${reply}\n`);
+        await archiveSession({
+          timestamp: new Date().toISOString(),
+          user_request: msg,
+          actions_taken: [
+            {
+              action: "executeLatestPendingIfConfirmed",
+              args: { input: msg },
+            },
+          ],
+          outcome: reply ?? "",
+        });
       } else {
         reply = await supervisor.handleRequest(msg, { history: cliHistory });
       }
