@@ -132,6 +132,15 @@ function formatTokenBalance(value) {
   return n.toLocaleString("en-US", { maximumFractionDigits: 8 });
 }
 
+/** Updates every `.js-bal[data-token]` (home, agent, send, settings, swap, status rail). */
+function renderGlobalBalances() {
+  document.querySelectorAll(".js-bal[data-token]").forEach((el) => {
+    const sym = el.getAttribute("data-token");
+    if (!sym) return;
+    el.textContent = swapState.balances[sym] ?? "0.0";
+  });
+}
+
 function showWalletAlert(message) {
   if (!walletAlertEl) return;
   walletAlertEl.textContent = message || "";
@@ -305,11 +314,13 @@ async function loadWalletAddress() {
     swapState.balances.WETH = formatTokenBalance(balance.tokenBalances?.WETH);
     swapState.balances.USDC = formatTokenBalance(balance.tokenBalances?.USDC);
     renderSwap();
+    renderGlobalBalances();
   } catch {
     swapState.balances.ETH = "0.0";
     swapState.balances.WETH = "0.0";
     swapState.balances.USDC = "0.0";
     renderSwap();
+    renderGlobalBalances();
   }
 }
 
@@ -639,7 +650,7 @@ function initAgent() {
     }
 
     try {
-      addMessage("assistant", "Simba: thinking…");
+      addMessage("assistant", "Jimmy: thinking…");
       const historyForApi = agentHistory.slice();
       agentHistory.push({ role: "user", content: text });
       const response = await fetch("/api/agent/chat", {
@@ -652,7 +663,7 @@ function initAgent() {
         throw new Error(payload.error || payload.detail || `HTTP ${response.status}`);
       }
       threadEl.querySelector(".chat-message:last-child .chat-bubble")?.parentElement?.remove();
-      const replyText = payload.reply?.trim() ? payload.reply : "Simba: (no text reply)";
+      const replyText = payload.reply?.trim() ? payload.reply : "Jimmy: (no text reply)";
       addMessage("assistant", replyText);
       agentHistory.push({ role: "assistant", content: replyText });
     } catch (error) {
@@ -670,7 +681,10 @@ function initAgent() {
   });
 
   if (!threadEl.dataset.ready) {
-    addMessage("assistant", "Simba online. Ask me anything or run transfer_to to send ETH.");
+    addMessage(
+      "assistant",
+      "Jimmy online. Ask about ENS, swaps, or wallet security — balances above refresh every few seconds.",
+    );
     threadEl.dataset.ready = "true";
   }
 }
@@ -728,6 +742,7 @@ function initApp() {
   initSend();
   initAgent();
   initSwap();
+  renderGlobalBalances();
   startWalletPolling();
   applyRoute(readRoute());
   window.addEventListener("popstate", () => applyRoute(readRoute()));

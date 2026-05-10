@@ -19,6 +19,8 @@ body {
   background: #050906;
   color: #effff2;
   font-family: Geist, Satoshi, Outfit, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Native <input> chrome (esp. Safari) follows light scheme unless hinted. */
+  color-scheme: dark;
 }
 
 canvas {
@@ -587,11 +589,75 @@ h1,
   cursor: pointer;
 }
 
-.agent-hint {
-  color: rgba(190, 245, 199, 0.6);
+.balances-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+  justify-content: flex-start;
+}
+
+.balances-strip--compact {
+  margin-top: 12px;
+  gap: 8px;
+  justify-content: center;
+}
+
+.send-head .balances-strip--compact,
+.settings-head .balances-strip--compact,
+.agent-head .balances-strip--compact,
+.swap-head .balances-strip--compact {
+  justify-content: center;
+}
+
+.balance-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid rgba(154, 217, 166, 0.28);
+  border-radius: 4px;
+  background: rgba(5, 13, 7, 0.45);
   font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.balances-strip--compact .balance-pill {
+  padding: 5px 10px;
   font-size: 11px;
-  text-align: left;
+}
+
+.bal-label {
+  color: rgba(190, 245, 199, 0.65);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.balance-pill .js-bal {
+  color: #e8ffe8;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-balances {
+  margin-top: 4px;
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(190, 245, 199, 0.92);
+}
+
+.status-bal-sep {
+  margin: 0 6px;
+  color: rgba(154, 217, 166, 0.45);
+  font-weight: 400;
+}
+
+.status-balances .js-bal {
+  font-variant-numeric: tabular-nums;
+  color: #e8ffe8;
 }
 
 .suggestions {
@@ -849,15 +915,43 @@ h1,
   flex: 1;
   min-width: 0;
   border: 0;
-  background: transparent;
+  border-radius: 2px;
+  -webkit-appearance: none;
+  appearance: none;
+  /* Explicit tint: Safari/Chrome still paint a light field if background is only "transparent". */
+  background-color: rgba(13, 32, 17, 0.25);
   color: #f0fff2;
+  caret-color: #b6eec1;
   font-size: clamp(24px, 3vw, 32px);
   font-weight: 800;
   outline: none;
 }
 
+.amount-input:focus {
+  background-color: rgba(13, 32, 17, 0.4);
+}
+
+.amount-input:focus-visible {
+  outline: 1px solid rgba(183, 241, 192, 0.45);
+  outline-offset: 2px;
+}
+
+.amount-input::placeholder {
+  color: rgba(190, 245, 199, 0.35);
+}
+
 .amount-input[readonly] {
+  background-color: transparent;
   color: #d2ffda;
+}
+
+/* Kill autofill yellow/white sheet on WebKit */
+.amount-input:-webkit-autofill,
+.amount-input:-webkit-autofill:hover,
+.amount-input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #f0fff2;
+  box-shadow: 0 0 0 1000px rgba(13, 32, 17, 0.85) inset;
+  transition: background-color 99999s ease-out;
 }
 
 .token-pill {

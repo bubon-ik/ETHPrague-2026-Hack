@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Simba Agent</title>
+    <title>Jimmy Agent</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -29,8 +29,8 @@
     <main id="page-home" class="home-main">
       <section class="hero">
         <div class="kicker"><span class="dot"></span> AI powered satellite wallet</div>
-        <h1>Simba<br />Agent</h1>
-        <p class="subtitle">A cinematic first screen for an AI-powered crypto agent: dark, sharp, and alive with moving binary code.</p>
+        <h1>Jimmy<br />Agent</h1>
+        <p class="subtitle">AI-powered satellite wallet with 4 security layers.</p>
         <div class="actions">
           <button type="button" data-route="swap">Swap</button>
           <button type="button" class="secondary" data-route="agent">Agent</button>
@@ -41,6 +41,11 @@
       <section class="visual-panel" aria-label="Generated wallet state">
         <div class="wallet-shell">
           <p id="wallet-address" class="wallet-address is-pending">wallet.pending</p>
+          <div class="balances-strip" aria-label="Sepolia balances">
+            <div class="balance-pill"><span class="bal-label">ETH</span><strong class="js-bal" data-token="ETH">0.0</strong></div>
+            <div class="balance-pill"><span class="bal-label">WETH</span><strong class="js-bal" data-token="WETH">0.0</strong></div>
+            <div class="balance-pill"><span class="bal-label">USDC</span><strong class="js-bal" data-token="USDC">0.0</strong></div>
+          </div>
         </div>
         <div class="wallet-controls">
           <div class="wallet-actions">
@@ -57,6 +62,13 @@
       <div>status: <span id="home-status-text">offline</span></div>
       <div>Network: EVM</div>
       <div>wallet: <span id="status-wallet-address">wallet.pending</span></div>
+      <div class="status-balances" aria-label="Sepolia balances">
+        <span>ETH <strong class="js-bal" data-token="ETH">0.0</strong></span>
+        <span class="status-bal-sep">·</span>
+        <span>WETH <strong class="js-bal" data-token="WETH">0.0</strong></span>
+        <span class="status-bal-sep">·</span>
+        <span>USDC <strong class="js-bal" data-token="USDC">0.0</strong></span>
+      </div>
       <div>agent.mode: autonomous</div>
     </aside>
 
@@ -65,6 +77,11 @@
         <div class="send-head">
           <div class="send-label">Send ETH</div>
           <div class="send-sub">Quick transfer via MK2-backed key.</div>
+          <div class="balances-strip balances-strip--compact" aria-label="Sepolia balances">
+            <div class="balance-pill"><span class="bal-label">ETH</span><strong class="js-bal" data-token="ETH">0.0</strong></div>
+            <div class="balance-pill"><span class="bal-label">WETH</span><strong class="js-bal" data-token="WETH">0.0</strong></div>
+            <div class="balance-pill"><span class="bal-label">USDC</span><strong class="js-bal" data-token="USDC">0.0</strong></div>
+          </div>
         </div>
         <div class="send-card">
           <label class="send-field">
@@ -101,6 +118,11 @@
         <div class="settings-head">
           <div class="settings-sub">Access Controls</div>
           <h1 class="settings-title">Settings</h1>
+          <div class="balances-strip balances-strip--compact" aria-label="Sepolia balances">
+            <div class="balance-pill"><span class="bal-label">ETH</span><strong class="js-bal" data-token="ETH">0.0</strong></div>
+            <div class="balance-pill"><span class="bal-label">WETH</span><strong class="js-bal" data-token="WETH">0.0</strong></div>
+            <div class="balance-pill"><span class="bal-label">USDC</span><strong class="js-bal" data-token="USDC">0.0</strong></div>
+          </div>
         </div>
         <div class="settings-card">
           <label class="settings-field">
@@ -143,19 +165,23 @@
       <div class="agent-shell">
         <div class="agent-head">
           <div class="agent-sub">Autonomous Web3 Security Agent</div>
-          <h1 class="agent-title">Simba Agent</h1>
+          <h1 class="agent-title">Jimmy Agent</h1>
+          <div class="balances-strip balances-strip--compact" aria-label="Sepolia balances">
+            <div class="balance-pill"><span class="bal-label">ETH</span><strong class="js-bal" data-token="ETH">0.0</strong></div>
+            <div class="balance-pill"><span class="bal-label">WETH</span><strong class="js-bal" data-token="WETH">0.0</strong></div>
+            <div class="balance-pill"><span class="bal-label">USDC</span><strong class="js-bal" data-token="USDC">0.0</strong></div>
+          </div>
         </div>
         <div id="agent-thread" class="chat-thread" role="log" aria-live="polite"></div>
         <div class="chat-composer">
           <textarea
             id="agent-input"
             class="chat-input"
-            placeholder="Message Simba..."
+            placeholder="Message Jimmy..."
             rows="2"
           ></textarea>
           <button id="agent-send" class="chat-send" type="button">Send</button>
         </div>
-        <div class="agent-hint">Tip: type transfer_to &lt;address&gt; &lt;amount&gt; ETH to run the CLI.</div>
         <button class="back-link" type="button" data-route="home">&#8592; Back</button>
       </div>
     </main>
@@ -165,6 +191,11 @@
         <div class="swap-head">
           <div class="swap-sub">Token Exchange</div>
           <h1 class="swap-title">Swap</h1>
+          <div class="balances-strip balances-strip--compact" aria-label="Sepolia balances">
+            <div class="balance-pill"><span class="bal-label">ETH</span><strong class="js-bal" data-token="ETH">0.0</strong></div>
+            <div class="balance-pill"><span class="bal-label">WETH</span><strong class="js-bal" data-token="WETH">0.0</strong></div>
+            <div class="balance-pill"><span class="bal-label">USDC</span><strong class="js-bal" data-token="USDC">0.0</strong></div>
+          </div>
         </div>
         <div class="swap-card">
           <div class="leg">
