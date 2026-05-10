@@ -7,6 +7,12 @@ const DEVICE_HOST = Bun.env.DEVICE_HOST ?? "10.0.0.1";
 const DEVICE_PORT = Number(Bun.env.DEVICE_PORT ?? 4000);
 const DEFAULT_GAS_LIMIT = 21000n;
 
+/** Sepolia Uniswap — plain ETH transfers revert (e.g. router: Not WETH9). */
+const TRANSFER_TO_REJECT_LOWER = new Set([
+  "0x3bfa4769fb09eefc5a80d6e87c3b9c650f7ae48e", // SwapRouter02
+  "0xed1f6473345f45b75f8179591dd5ba1888cf2fb3", // QuoterV2
+]);
+
 const rawArgs = Bun.argv.slice(2);
 if (rawArgs.length === 0 || rawArgs.includes("--help") || rawArgs.includes("-h")) {
   printUsage();
@@ -45,6 +51,11 @@ async function cmdTransfer(positionals, flags) {
   }
 
   const to = normalizeAddress(toRaw);
+  if (TRANSFER_TO_REJECT_LOWER.has(to.toLowerCase())) {
+    throw new Error(
+      `refusing transfer_to ${to}: this is the Sepolia Uniswap router or quoter, not a wallet — plain ETH reverts (Not WETH9). Use a real wallet 0x address.`,
+    );
+  }
   const value = parseUnits(amountRaw, 18);
   const dryRun = flags.has("dry-run");
   const gasLimit = flags.get("gas-limit") ? BigInt(flags.get("gas-limit")) : DEFAULT_GAS_LIMIT;

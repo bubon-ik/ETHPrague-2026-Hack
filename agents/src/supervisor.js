@@ -33,7 +33,9 @@ function mergeMarketToolPayload(args) {
   copyIfMissing("token");
   copyIfMissing("domain");
   copyIfMissing("to");
-  copyIfMissing("recipient", "to");
+  copyIfMissing("recipient");
+  copyIfMissing("outputRecipient", "recipient");
+  copyIfMissing("buyer", "recipient");
   copyIfMissing("address", "to");
   copyIfMissing("value", "amount");
   copyIfMissing("eth", "amount");
@@ -96,7 +98,7 @@ const tools = [
     function: {
       name: "prepare_market_action",
       description:
-        "First step for value-moving actions on Sepolia: quote (swap, ENS registration fee, OR native ETH send). Returns approval_id — no spend yet. For BUY_DOMAIN: only after check_domain was AVAILABLE and the user agreed to register on Sepolia; use payload { domain: 'name.eth' } matching the checked name. For SWAP_TOKEN: payload { token, amount }. For SEND_NATIVE: payload { to: '0x...', amount } — native Sepolia ETH only, not ERC-20. After showing the quote, ask confirmation; then execute_market_action. Fields may be top-level or inside payload.",
+        "First step for value-moving actions on Sepolia: quote (swap, ENS registration fee, OR native ETH send). Returns approval_id — no spend yet. For BUY_DOMAIN: only after check_domain was AVAILABLE and the user agreed to register on Sepolia; use payload { domain: 'name.eth' } matching the checked name. For SWAP_TOKEN: payload { token: 'ETH'|'USDC', amount } — sell that token for the pair (ETH↔USDC on Sepolia Uniswap V3). Optional recipient: 0x address of wallet that receives bought tokens (default: user's wallet). Use recipient when user sells ETH into USDC for another address. For SEND_NATIVE: payload { to: '0x...', amount } — raw ETH transfer, not a swap. After showing the quote, ask confirmation; then execute_market_action. Fields may be top-level or inside payload.",
       parameters: {
         type: "object",
         properties: {
@@ -107,7 +109,7 @@ const tools = [
           payload: {
             type: "object",
             description:
-              "BUY_DOMAIN: { domain: 'name.eth' }. SWAP_TOKEN: { token: 'ETH'|'USDC', amount }. SEND_NATIVE: { to: '0x...', amount } in ETH (e.g. 0.01). Same fields may be passed at top level instead.",
+              "BUY_DOMAIN: { domain: 'name.eth' }. SWAP_TOKEN: { token, amount, recipient?: '0x...' } — recipient gets output tokens. SEND_NATIVE: { to, amount }. Same fields may be passed at top level instead.",
           },
           duration_years: {
             type: "number",
@@ -133,6 +135,11 @@ const tools = [
             description:
               "Optional alternative to payload.to — recipient 0x address for SEND_NATIVE.",
           },
+          recipient: {
+            type: "string",
+            description:
+              "Optional for SWAP_TOKEN: 0x address that receives bought tokens (output of Uniswap). Omit to use the signing wallet.",
+          },
         },
         required: ["action"],
       },
@@ -154,7 +161,7 @@ const tools = [
           payload: {
             type: "object",
             description:
-              "Must match prepare: BUY_DOMAIN { domain }. SWAP_TOKEN { token, amount }. SEND_NATIVE { to, amount } — same decimals as quoted. May use top-level fields instead.",
+              "Must match prepare: BUY_DOMAIN { domain }. SWAP_TOKEN { token, amount, recipient? }. SEND_NATIVE { to, amount } — same decimals as quoted. May use top-level fields instead.",
           },
           approval_id: {
             type: "string",
@@ -176,6 +183,11 @@ const tools = [
             type: "string",
             description:
               "Must match prepare — optional alternative to payload.to for SEND_NATIVE.",
+          },
+          recipient: {
+            type: "string",
+            description:
+              "Must match prepare for SWAP_TOKEN — who receives bought tokens.",
           },
         },
         required: ["action", "approval_id"],

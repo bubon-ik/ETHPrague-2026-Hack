@@ -5,7 +5,8 @@
  * 1. prepareMarketAction → price quote + approval_id (pending in memory, TTL).
  * 2. User confirms in chat → supervisor calls executeMarketAction with same action/payload + approval_id.
  *
- * SWAP_TOKEN: Uniswap V3 Sepolia (same router as wallet stack).
+ * SWAP_TOKEN: Uniswap V3 Sepolia (same router as wallet stack). Optional `recipient`
+ *   sends bought tokens to another 0x (e.g. sell ETH → USDC credited to buyer wallet).
  * BUY_DOMAIN: Sepolia ENS ETHRegistrarController — commit → wait minCommitmentAge → register.
  * SEND_NATIVE: native Sepolia ETH transfer to a checksummed 0x address (prepare → approve → execute).
  */
@@ -50,6 +51,14 @@ const ENS_SEPOLIA = {
   /** Default public resolver on Sepolia */
   publicResolver: "0xE99638b40E4Fff0129D56f03b55b6bbC4BBE49b5",
 };
+
+/** Plain ETH `sendTransaction` to these reverts (e.g. SwapRouter: "Not WETH9"). */
+const SEND_NATIVE_REJECT_RECIPIENTS_LOWER = new Set(
+  [
+    UNISWAP_SEPOLIA.swapRouter02,
+    UNISWAP_SEPOLIA.quoterV2,
+  ].map((a) => getAddress(a).toLowerCase()),
+);
 
 const UNISWAP_V3_DEFAULT_FEE = 10000;
 /** Prefer 0.3% — main Sepolia USDC/WETH liquidity; fall back for other pairs. */
@@ -302,6 +311,13 @@ function coerceSwapPayload(raw) {
 
   const buy = String(p.buyToken ?? p.toToken ?? p.outToken ?? "").toUpperCase();
 
+  const recipient = firstDefined(
+    p.recipient,
+    p.outputRecipient,
+    p.buyer,
+    p.tokenRecipient,
+  );
+
   let tokUpper = token ? String(token).toUpperCase() : "";
   if (tokUpper === "WETH") tokUpper = "ETH";
   if (!tokUpper) {
@@ -310,7 +326,36 @@ function coerceSwapPayload(raw) {
     else tokUpper = "ETH";
   }
 
-  return { ...p, token: tokUpper, amount };
+  return { ...p, token: tokUpper, amount, recipient };
+}
+
+/**
+ * Uniswap `exactInputSingle` `recipient` — who receives tokenOut (e.g. USDC when selling ETH).
+ * @param {`0x${string}`} defaultRecipient wallet address when omitted
+ */
+function parseSwapOutputRecipient(rawPayload, defaultRecipient) {
+  const p = coerceSwapPayload(rawPayload);
+  const raw = p.recipient;
+  if (raw == null || String(raw).trim() === "") {
+    return getAddress(defaultRecipient);
+  }
+  const s = String(raw).trim();
+  if (!isAddress(s)) {
+    throw new Error(
+      `Invalid swap output recipient: ${s}. Use a checksummed 0x wallet address or omit for self.`,
+    );
+  }
+  const addr = getAddress(s);
+  const zero = "0x0000000000000000000000000000000000000000";
+  if (addr.toLowerCase() === zero) {
+    throw new Error("Swap output recipient cannot be the zero address.");
+  }
+  if (SEND_NATIVE_REJECT_RECIPIENTS_LOWER.has(addr.toLowerCase())) {
+    throw new Error(
+      `Swap output cannot go to ${addr} (Uniswap router/quoter). Use a wallet (EOA) address.`,
+    );
+  }
+  return addr;
 }
 
 /**
@@ -364,7 +409,8 @@ function canonicalSwapAmountString(rawAmount, symbolUpper) {
   return { canonicalStr: s, units };
 }
 
-function resolveSwapPair(rawPayload) {
+function resolveSwapPair(rawPayload, walletAddress) {
+  const wallet = getAddress(walletAddress);
   const payload = coerceSwapPayload(rawPayload);
   const symbol = String(payload?.token ?? "ETH").toUpperCase();
   const { canonicalStr, units } = canonicalSwapAmountString(
@@ -384,25 +430,37 @@ function resolveSwapPair(rawPayload) {
     );
   }
 
-  const canonicalPayload = { token: symbol, amount: canonicalStr };
+  const outputRecipient = parseSwapOutputRecipient(rawPayload, wallet);
+  const canonicalPayload = {
+    token: symbol,
+    amount: canonicalStr,
+    recipient: outputRecipient,
+  };
+
+  const recipientNote =
+    outputRecipient.toLowerCase() === wallet.toLowerCase()
+      ? ""
+      : ` → ${outputRecipient}`;
 
   if (symbol === "ETH") {
     return {
-      label: "ETH → USDC",
+      label: `ETH → USDC${recipientNote}`,
       tokenIn: SEPOLIA_TOKENS.ETH,
       tokenOut: SEPOLIA_TOKENS.USDC,
       amountInWei: units,
       sellNativeEth: true,
+      outputRecipient,
       canonicalPayload,
     };
   }
   if (symbol === "USDC") {
     return {
-      label: "USDC → ETH",
+      label: `USDC → ETH${recipientNote}`,
       tokenIn: SEPOLIA_TOKENS.USDC,
       tokenOut: SEPOLIA_TOKENS.ETH,
       amountInRaw: units,
       sellNativeEth: false,
+      outputRecipient,
       canonicalPayload,
     };
   }
@@ -512,6 +570,11 @@ function parseSendNativePayload(rawPayload) {
   if (checksummedTo.toLowerCase() === zero) {
     throw new Error("Cannot send to the zero address.");
   }
+  if (SEND_NATIVE_REJECT_RECIPIENTS_LOWER.has(checksummedTo.toLowerCase())) {
+    throw new Error(
+      `Cannot send plain ETH to ${checksummedTo}: this is the Sepolia Uniswap V3 router or Quoter — they reject direct ETH transfers (revert: Not WETH9). Use another wallet (EOA) address, or use SWAP_TOKEN to trade via Uniswap.`,
+    );
+  }
 
   const { canonicalStr, units } = canonicalSwapAmountString(p.amount, "ETH");
   const maxHuman = maxSwapAmount();
@@ -572,7 +635,11 @@ function payloadMatchesPending(pending, action, payload) {
       if (symA !== symB) return false;
       const ca = canonicalSwapAmountString(a.amount, symA);
       const cb = canonicalSwapAmountString(b.amount, symB);
-      return ca.units === cb.units;
+      if (ca.units !== cb.units) return false;
+      const recPrepared = pending.payload.recipient;
+      if (!recPrepared) return false;
+      const recIncoming = parseSwapOutputRecipient(payload, recPrepared);
+      return recIncoming === getAddress(recPrepared);
     } catch {
       return false;
     }
@@ -612,11 +679,13 @@ export async function prepareMarketAction(action, payload, durationYears = 1) {
   console.log(`\n[Market Agent prepare]: action=${action}`, payload);
 
   if (action === "SWAP_TOKEN") {
+    const pk = normalizePrivateKey(process.env.WALLET_PRIVATE_KEY);
+    const account = privateKeyToAccount(pk);
     const publicClient = createPublicClient({
       chain: sepolia,
       transport: http(getSepoliaRpcUrl()),
     });
-    const pair = resolveSwapPair(payload);
+    const pair = resolveSwapPair(payload, account.address);
     const amountIn = pair.amountInWei ?? pair.amountInRaw;
     const { amountOut: quotedOut, fee: swapFee } = await quoteExactInputSingle(
       publicClient,
@@ -648,10 +717,14 @@ export async function prepareMarketAction(action, payload, durationYears = 1) {
       pair: pair.label,
       sellAmount: pair.canonicalPayload.amount,
       sellToken: pair.canonicalPayload.token,
+      output_recipient: pair.outputRecipient,
+      output_is_self:
+        pair.outputRecipient.toLowerCase() === account.address.toLowerCase(),
       uniswap_fee_tier: swapFee,
       estimatedAmountOutRaw: quotedOut.toString(),
       expires_at: new Date(expiresAt).toISOString(),
-      note: "Tell the user the quote and ask them to confirm. After they approve, call execute_market_action with this approval_id.",
+      note:
+        "Tell the user the quote (sell side, estimated output, who receives tokens). After they approve, call execute_market_action with the same action, payload (token, amount, recipient if any), and approval_id.",
     };
   }
 
@@ -908,10 +981,15 @@ async function executeSendNativeFromPending(pending) {
       transactionHash: hash,
     };
   } catch (e) {
+    let detail = e?.shortMessage ?? e?.message ?? String(e);
+    if (/Not WETH9/i.test(detail)) {
+      detail +=
+        " Recipient is likely the Uniswap V3 SwapRouter on Sepolia — it does not accept wallet-to-wallet ETH. Send to an EOA address or use SWAP_TOKEN.";
+    }
     return {
       status: "FAIL",
       reason: "SEND_EXEC_FAILED",
-      detail: e?.shortMessage ?? e?.message ?? String(e),
+      detail,
     };
   }
 }
@@ -934,7 +1012,7 @@ async function executeSwapFromPending(pending) {
       tokenIn: pair.tokenIn.address,
       tokenOut: pair.tokenOut.address,
       fee: swapFee,
-      recipient: account.address,
+      recipient: pair.outputRecipient,
       amountIn,
       amountOutMinimum,
       sqrtPriceLimitX96: 0n,
@@ -963,15 +1041,21 @@ async function executeSwapFromPending(pending) {
     });
 
     const ok = receipt.status === "success";
+    const toOther =
+      pair.outputRecipient.toLowerCase() !== account.address.toLowerCase();
+    const msg = ok
+      ? toOther
+        ? `Swap confirmed: ${pair.label}; output tokens sent to ${pair.outputRecipient} (tx ${swapHash})`
+        : `Swap confirmed: ${pair.label} (tx ${swapHash})`
+      : `Swap reverted on-chain (tx ${swapHash})`;
     return {
       status: ok ? "SUCCESS" : "FAIL",
       transactionHash: swapHash,
       chainId: SEPOLIA_CHAIN_ID,
       pair: pair.label,
+      output_recipient: pair.outputRecipient,
       blockNumber: receipt.blockNumber?.toString() ?? null,
-      message: ok
-        ? `Swap confirmed: ${pair.label} (tx ${swapHash})`
-        : `Swap reverted on-chain (tx ${swapHash})`,
+      message: msg,
     };
   } catch (error) {
     const msg =
