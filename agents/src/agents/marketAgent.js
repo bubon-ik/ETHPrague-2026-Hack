@@ -8,7 +8,7 @@
  * SWAP_TOKEN: Uniswap V3 Sepolia (same router as wallet stack). Optional `recipient`
  *   sends bought tokens to another 0x (e.g. sell ETH → USDC credited to buyer wallet).
  * BUY_DOMAIN: Sepolia ENS ETHRegistrarController — commit → wait minCommitmentAge → register.
- * SEND_NATIVE: native Sepolia ETH transfer to a checksummed 0x address (prepare → approve → execute).
+ * SEND_NATIVE: native Sepolia ETH transfer (prepare → approve → execute). `to` may be **0x** or **ENS** on Sepolia.
  */
 
 import crypto from "node:crypto";
@@ -329,33 +329,74 @@ function coerceSwapPayload(raw) {
   return { ...p, token: tokUpper, amount, recipient };
 }
 
+function assertAllowedMarketRecipient(addr, context) {
+  const a = getAddress(addr);
+  const zero = "0x0000000000000000000000000000000000000000";
+  if (a.toLowerCase() === zero) {
+    throw new Error(`${context}: zero address is not allowed.`);
+  }
+  if (SEND_NATIVE_REJECT_RECIPIENTS_LOWER.has(a.toLowerCase())) {
+    throw new Error(
+      `${context}: ${a} is the Sepolia Uniswap router or quoter — use a wallet address or swap flow.`,
+    );
+  }
+  return a;
+}
+
+/**
+ * Resolve `0x…` or ENS on **Sepolia** (forward addr record).
+ */
+async function resolveAddressOrEnsName(rawInput, publicClient, contextLabel) {
+  const raw = String(rawInput ?? "").trim();
+  if (!raw) {
+    throw new Error(
+      `Missing ${contextLabel}. Use a 0x address or an ENS name (e.g. name.eth).`,
+    );
+  }
+  if (isAddress(raw)) {
+    return {
+      address: assertAllowedMarketRecipient(raw, contextLabel),
+      ensName: null,
+    };
+  }
+  let ensName;
+  try {
+    ensName = normalize(raw);
+  } catch (e) {
+    throw new Error(
+      `Invalid ${contextLabel} "${raw}": not a valid 0x address or ENS name (${e?.message ?? e}).`,
+    );
+  }
+  const resolved = await publicClient.getEnsAddress({ name: ensName });
+  if (resolved == null) {
+    throw new Error(
+      `ENS "${ensName}" has no address on **Sepolia**. Set a resolver / addr record for this name on Sepolia, or use a raw 0x address.`,
+    );
+  }
+  return {
+    address: assertAllowedMarketRecipient(resolved, contextLabel),
+    ensName,
+  };
+}
+
 /**
  * Uniswap `exactInputSingle` `recipient` — who receives tokenOut (e.g. USDC when selling ETH).
- * @param {`0x${string}`} defaultRecipient wallet address when omitted
+ * @param {`0x${string}`} defaultRecipient wallet address when recipient omitted
  */
-function parseSwapOutputRecipient(rawPayload, defaultRecipient) {
-  const p = coerceSwapPayload(rawPayload);
-  const raw = p.recipient;
+async function resolveSwapRecipientForPayload(
+  rawPayload,
+  defaultRecipient,
+  publicClient,
+) {
+  const raw = coerceSwapPayload(rawPayload).recipient;
   if (raw == null || String(raw).trim() === "") {
-    return getAddress(defaultRecipient);
+    return { address: getAddress(defaultRecipient), ensName: null };
   }
-  const s = String(raw).trim();
-  if (!isAddress(s)) {
-    throw new Error(
-      `Invalid swap output recipient: ${s}. Use a checksummed 0x wallet address or omit for self.`,
-    );
-  }
-  const addr = getAddress(s);
-  const zero = "0x0000000000000000000000000000000000000000";
-  if (addr.toLowerCase() === zero) {
-    throw new Error("Swap output recipient cannot be the zero address.");
-  }
-  if (SEND_NATIVE_REJECT_RECIPIENTS_LOWER.has(addr.toLowerCase())) {
-    throw new Error(
-      `Swap output cannot go to ${addr} (Uniswap router/quoter). Use a wallet (EOA) address.`,
-    );
-  }
-  return addr;
+  return resolveAddressOrEnsName(
+    raw,
+    publicClient,
+    "swap output recipient",
+  );
 }
 
 /**
@@ -409,7 +450,7 @@ function canonicalSwapAmountString(rawAmount, symbolUpper) {
   return { canonicalStr: s, units };
 }
 
-function resolveSwapPair(rawPayload, walletAddress) {
+async function resolveSwapPair(rawPayload, walletAddress, publicClient) {
   const wallet = getAddress(walletAddress);
   const payload = coerceSwapPayload(rawPayload);
   const symbol = String(payload?.token ?? "ETH").toUpperCase();
@@ -430,7 +471,8 @@ function resolveSwapPair(rawPayload, walletAddress) {
     );
   }
 
-  const outputRecipient = parseSwapOutputRecipient(rawPayload, wallet);
+  const { address: outputRecipient, ensName: outputRecipientEnsName } =
+    await resolveSwapRecipientForPayload(rawPayload, wallet, publicClient);
   const canonicalPayload = {
     token: symbol,
     amount: canonicalStr,
@@ -440,7 +482,7 @@ function resolveSwapPair(rawPayload, walletAddress) {
   const recipientNote =
     outputRecipient.toLowerCase() === wallet.toLowerCase()
       ? ""
-      : ` → ${outputRecipient}`;
+      : ` → ${outputRecipient}${outputRecipientEnsName ? ` (${outputRecipientEnsName})` : ""}`;
 
   if (symbol === "ETH") {
     return {
@@ -450,6 +492,7 @@ function resolveSwapPair(rawPayload, walletAddress) {
       amountInWei: units,
       sellNativeEth: true,
       outputRecipient,
+      outputRecipientEnsName,
       canonicalPayload,
     };
   }
@@ -461,6 +504,7 @@ function resolveSwapPair(rawPayload, walletAddress) {
       amountInRaw: units,
       sellNativeEth: false,
       outputRecipient,
+      outputRecipientEnsName,
       canonicalPayload,
     };
   }
@@ -551,30 +595,24 @@ function coerceSendPayload(raw) {
 }
 
 /**
- * @returns {{ checksummedTo: `0x${string}`, canonicalAmount: string, valueWei: bigint }}
+ * @returns {{ checksummedTo: `0x${string}`, canonicalAmount: string, valueWei: bigint, ensName: string | null }}
  */
-function parseSendNativePayload(rawPayload) {
+async function parseSendNativePayloadAsync(rawPayload, publicClient) {
   const p = coerceSendPayload(rawPayload);
   const rawTo = p.to;
   if (rawTo == null || String(rawTo).trim() === "") {
     throw new Error(
-      "Missing recipient. Use payload.to (0x address), or recipient / address.",
+      "Missing recipient. Use payload.to (0x or ENS), or recipient / address.",
     );
   }
-  const s = String(rawTo).trim();
-  if (!isAddress(s)) {
-    throw new Error(`Invalid recipient address: ${s}`);
-  }
-  const checksummedTo = getAddress(s);
-  const zero = "0x0000000000000000000000000000000000000000";
-  if (checksummedTo.toLowerCase() === zero) {
-    throw new Error("Cannot send to the zero address.");
-  }
-  if (SEND_NATIVE_REJECT_RECIPIENTS_LOWER.has(checksummedTo.toLowerCase())) {
-    throw new Error(
-      `Cannot send plain ETH to ${checksummedTo}: this is the Sepolia Uniswap V3 router or Quoter — they reject direct ETH transfers (revert: Not WETH9). Use another wallet (EOA) address, or use SWAP_TOKEN to trade via Uniswap.`,
-    );
-  }
+
+  const resolved = await resolveAddressOrEnsName(
+    rawTo,
+    publicClient,
+    "send recipient (to)",
+  );
+  const checksummedTo = resolved.address;
+  const ensName = resolved.ensName ?? null;
 
   const { canonicalStr, units } = canonicalSwapAmountString(p.amount, "ETH");
   const maxHuman = maxSwapAmount();
@@ -589,6 +627,7 @@ function parseSendNativePayload(rawPayload) {
     checksummedTo,
     canonicalAmount: canonicalStr,
     valueWei: units,
+    ensName,
   };
 }
 
@@ -624,7 +663,7 @@ function buildClients() {
   return { account, publicClient, walletClient };
 }
 
-function payloadMatchesPending(pending, action, payload) {
+async function payloadMatchesPending(pending, action, payload, publicClient) {
   if (pending.action !== action) return false;
   if (action === "SWAP_TOKEN") {
     try {
@@ -638,7 +677,11 @@ function payloadMatchesPending(pending, action, payload) {
       if (ca.units !== cb.units) return false;
       const recPrepared = pending.payload.recipient;
       if (!recPrepared) return false;
-      const recIncoming = parseSwapOutputRecipient(payload, recPrepared);
+      const { address: recIncoming } = await resolveSwapRecipientForPayload(
+        payload,
+        recPrepared,
+        publicClient,
+      );
       return recIncoming === getAddress(recPrepared);
     } catch {
       return false;
@@ -655,8 +698,8 @@ function payloadMatchesPending(pending, action, payload) {
   }
   if (action === "SEND_NATIVE") {
     try {
-      const a = parseSendNativePayload(payload);
-      const b = parseSendNativePayload(pending.payload);
+      const a = await parseSendNativePayloadAsync(payload, publicClient);
+      const b = await parseSendNativePayloadAsync(pending.payload, publicClient);
       return (
         a.checksummedTo === b.checksummedTo &&
         a.valueWei === b.valueWei
@@ -685,7 +728,7 @@ export async function prepareMarketAction(action, payload, durationYears = 1) {
       chain: sepolia,
       transport: http(getSepoliaRpcUrl()),
     });
-    const pair = resolveSwapPair(payload, account.address);
+    const pair = await resolveSwapPair(payload, account.address, publicClient);
     const amountIn = pair.amountInWei ?? pair.amountInRaw;
     const { amountOut: quotedOut, fee: swapFee } = await quoteExactInputSingle(
       publicClient,
@@ -718,6 +761,9 @@ export async function prepareMarketAction(action, payload, durationYears = 1) {
       sellAmount: pair.canonicalPayload.amount,
       sellToken: pair.canonicalPayload.token,
       output_recipient: pair.outputRecipient,
+      ...(pair.outputRecipientEnsName
+        ? { recipient_ens_name: pair.outputRecipientEnsName }
+        : {}),
       output_is_self:
         pair.outputRecipient.toLowerCase() === account.address.toLowerCase(),
       uniswap_fee_tier: swapFee,
@@ -851,8 +897,8 @@ export async function prepareMarketAction(action, payload, durationYears = 1) {
         throw new Error(`RPC chainId ${net}; expected Sepolia (${SEPOLIA_CHAIN_ID}).`);
       }
 
-      const { checksummedTo, canonicalAmount, valueWei } =
-        parseSendNativePayload(payload);
+      const { checksummedTo, canonicalAmount, valueWei, ensName } =
+        await parseSendNativePayloadAsync(payload, publicClient);
       if (checksummedTo.toLowerCase() === account.address.toLowerCase()) {
         return {
           status: "ERROR",
@@ -874,6 +920,7 @@ export async function prepareMarketAction(action, payload, durationYears = 1) {
         send: {
           to: checksummedTo,
           valueWei,
+          ensName,
         },
       });
 
@@ -883,11 +930,12 @@ export async function prepareMarketAction(action, payload, durationYears = 1) {
         chainId: SEPOLIA_CHAIN_ID,
         action: "SEND_NATIVE",
         to: checksummedTo,
+        ...(ensName ? { ens_name: ensName } : {}),
         amountEth: canonicalAmount,
         valueWei: valueWei.toString(),
         expires_at: new Date(expiresAt).toISOString(),
         note:
-          "Native Sepolia ETH transfer (not mainnet). Show to + amount and ask the user to confirm; then execute_market_action with the same action, payload, and approval_id.",
+          "Native Sepolia ETH transfer (not mainnet). Recipient may be 0x or ENS (resolved on Sepolia). Show to + amount and ask the user to confirm; then execute_market_action with the same action, payload, and approval_id.",
       };
     } catch (e) {
       return {
@@ -917,7 +965,8 @@ export async function executeMarketAction(action, payload, approvalId) {
     };
   }
 
-  if (!payloadMatchesPending(pending, action, payload)) {
+  const { publicClient } = buildClients();
+  if (!(await payloadMatchesPending(pending, action, payload, publicClient))) {
     return {
       status: "FAIL",
       reason: "PAYLOAD_MISMATCH",

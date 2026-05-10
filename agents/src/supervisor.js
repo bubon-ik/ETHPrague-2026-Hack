@@ -98,7 +98,7 @@ const tools = [
     function: {
       name: "prepare_market_action",
       description:
-        "First step for value-moving actions on Sepolia: quote (swap, ENS registration fee, OR native ETH send). Returns approval_id — no spend yet. For BUY_DOMAIN: only after check_domain was AVAILABLE and the user agreed to register on Sepolia; use payload { domain: 'name.eth' } matching the checked name. For SWAP_TOKEN: payload { token: 'ETH'|'USDC', amount } — sell that token for the pair (ETH↔USDC on Sepolia Uniswap V3). Optional recipient: 0x address of wallet that receives bought tokens (default: user's wallet). Use recipient when user sells ETH into USDC for another address. For SEND_NATIVE: payload { to: '0x...', amount } — raw ETH transfer, not a swap. After showing the quote, ask confirmation; then execute_market_action. Fields may be top-level or inside payload.",
+        "First step for value-moving actions on Sepolia: quote (swap, ENS registration fee, OR native ETH send). Returns approval_id — no spend yet. For BUY_DOMAIN: only after check_domain was AVAILABLE and the user agreed to register on Sepolia; use payload { domain: 'name.eth' } matching the checked name. For SWAP_TOKEN: payload { token: 'ETH'|'USDC', amount } — sell that token for the pair (ETH↔USDC on Sepolia Uniswap V3). Optional recipient: **0x address or ENS name** (resolved on **Sepolia**) for who receives bought tokens (default: user's wallet). For SEND_NATIVE: payload { to: '0x...' or 'name.eth', amount } — raw ETH transfer. After showing the quote, ask confirmation; then execute_market_action. Fields may be top-level or inside payload.",
       parameters: {
         type: "object",
         properties: {
@@ -109,7 +109,7 @@ const tools = [
           payload: {
             type: "object",
             description:
-              "BUY_DOMAIN: { domain: 'name.eth' }. SWAP_TOKEN: { token, amount, recipient?: '0x...' } — recipient gets output tokens. SEND_NATIVE: { to, amount }. Same fields may be passed at top level instead.",
+              "BUY_DOMAIN: { domain: 'name.eth' }. SWAP_TOKEN: { token, amount, recipient?: '0x...'|'name.eth' } — recipient gets output tokens (ENS on Sepolia). SEND_NATIVE: { to, amount } — to may be 0x or ENS (Sepolia). Same fields may be passed at top level instead.",
           },
           duration_years: {
             type: "number",
@@ -133,12 +133,12 @@ const tools = [
           to: {
             type: "string",
             description:
-              "Optional alternative to payload.to — recipient 0x address for SEND_NATIVE.",
+              "Optional alternative to payload.to — recipient 0x or ENS (Sepolia) for SEND_NATIVE.",
           },
           recipient: {
             type: "string",
             description:
-              "Optional for SWAP_TOKEN: 0x address that receives bought tokens (output of Uniswap). Omit to use the signing wallet.",
+              "Optional for SWAP_TOKEN: 0x address or ENS name (Sepolia) that receives bought tokens. Omit to use the signing wallet.",
           },
         },
         required: ["action"],

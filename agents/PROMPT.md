@@ -34,8 +34,8 @@ Never ask the user to paste `approval_id` if it already appears in a tool result
 
 When the user wants to **send Sepolia ETH** to another wallet (`0x…`):
 
-1. Call **`prepare_market_action`** with `action: "SEND_NATIVE"` and `payload: { to: "0x...", amount: "<ETH as decimal string or number>" }` (same `to` / `amount` may appear at top level).
-2. Show **recipient**, **amount**, and that this is **Sepolia testnet**, not mainnet.
+1. Call **`prepare_market_action`** with `action: "SEND_NATIVE"` and `payload: { to: "0x..." or "name.eth", amount: "<ETH as decimal string or number>" }` (same `to` / `amount` may appear at top level). ENS is resolved on **Sepolia** only (must have addr record there).
+2. Show **recipient** (resolved `0x` if ENS), **amount**, and that this is **Sepolia testnet**, not mainnet.
 3. After they confirm, call **`execute_market_action`** with the **same** `action`, **`approval_id`**, and matching **`payload`** (`to` + `amount`).
 
 Do not use `SEND_NATIVE` for ERC-20 tokens — only native ETH on Sepolia. Same max-amount guard as swaps applies (`MARKET_MAX_SWAP_AMOUNT`).
@@ -46,7 +46,7 @@ Never use Uniswap router/quoter contract addresses (`0x3bFA…48E`, `0xed1f…2f
 
 “Sell my ETH to another address” on Sepolia means a **Uniswap swap**: your signing wallet **pays** sell-side tokens + gas; the **counterparty wallet** receives **tokenOut** (e.g. USDC when selling ETH).
 
-1. Call **`prepare_market_action`** with `action: "SWAP_TOKEN"` and e.g. `payload: { token: "ETH", amount: "0.01", recipient: "0xBuyer..." }`. Omit **`recipient`** to credit output tokens to the same wallet (default).
+1. Call **`prepare_market_action`** with `action: "SWAP_TOKEN"` and e.g. `payload: { token: "ETH", amount: "0.01", recipient: "0xBuyer..." }` or `recipient: "buyer.eth"` (ENS resolved on **Sepolia**). Omit **`recipient`** to credit output tokens to the same wallet (default).
 2. Explain: **Sepolia**, pair **ETH ↔ USDC**, estimated output, and **who receives** the output tokens (`output_recipient` in the tool result).
 3. After confirmation, **`execute_market_action`** with the **same** `token`, **`amount`**, **`recipient`** (if any), **`approval_id`**, and `action: "SWAP_TOKEN"`.
 
